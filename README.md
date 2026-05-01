@@ -1,57 +1,70 @@
-# RepoClaw
+<div align="center">
+  <h1>🦀 RepoClaw</h1>
+  <p><strong>The Autonomous AI Engine that Fixes Broken Repositories Before You Even Clone Them.</strong></p>
+</div>
 
-*Autonomous Repository Analysis & Auto-Fix Agent*
+## 🚀 The Pitch
+**RepoClaw** is an autonomous repository evaluation and repair agent built for modern engineering teams. Instead of manually cloning a repo, installing dependencies, dealing with cryptic build failures, and hunting for patches on StackOverflow, RepoClaw automates the entire debugging lifecycle in a secure, ephemeral sandbox. It fetches code, identifies its architecture, attempts a live build, and when (not if) it fails, it uses advanced AI (Gemini 2.5 Flash) to classify the failure, dynamically injects a deterministic patch, and retries. You get a fully sanitized, working repository or a crystal-clear diagnostic report—zero manual effort required.
 
-## Product Overview
-RepoClaw is an OpenClaw-native autonomous AI agent designed to treat GitHub repository evaluation as a closed-loop debugging problem. When provided a GitHub URL via Telegram or Discord, RepoClaw clones the repository into an ephemeral Docker sandbox and attempts to build it. On failure, it parses the build errors via the Anthropic Claude API, selects and applies a deterministic fix strategy, and retries the build. This autonomous `try -> classify -> fix -> retry` loop runs up to 3 times before issuing a final, structured verdict (`Buildable`, `Fixable`, or `Non-Buildable`) back to the original chat.
+## ✨ Key Features
+- **Zero-Touch Evaluation:** Submit a GitHub URL and let the agent handle cloning, parsing, and execution.
+- **Autonomous Repair Loop:** `Try -> Classify -> Fix -> Retry`. The agent autonomously patches missing dependencies, syntax issues, and environment configs.
+- **Secure Ephemeral Execution:** Every repository is jailed inside a throwaway Docker sandbox, ensuring your host machine remains pristine.
+- **Deterministic AI Heuristics:** Combines the reasoning power of LLMs with deterministic, hard-coded fallback strategies for guaranteed execution stability.
+- **Instant Verdicts:** Returns actionable diagnostic artifacts classifying the repository as `Buildable`, `Fixable`, or `Non-Buildable`.
 
-## Architecture Overview
-RepoClaw maps directly onto the 5-layer OpenClaw stack. The architecture strictly enforces statelessness at the execution layer, concentrating state management inside the Pi Engine orchestrator and YAML memory system.
+## 🔄 The Autonomous Pipeline
 
-1. **Communication Layer:** Telegram / Discord interfaces.
-2. **Channel Adapter:** Normalizes inputs via OpenClaw ProtocolAdapter.
-3. **Gateway:** Node.js / TypeScript WebSocket router.
-4. **Pi Engine (Orchestrator):** The brain managing the retry loop and memory state.
-5. **Skills Layer:** 6 completely decoupled, stateless execution modules.
+```mermaid
+graph TD
+    A[GitHub URL Submitted] -->|Fetch| B(RepoClaw Pi Engine)
+    B --> C[Clone to Ephemeral Sandbox]
+    C --> D[Analyze Structure & Configs]
+    D --> E{Execute Docker Build}
+    E -->|Success| F([✅ Buildable Verdict])
+    E -->|Failure| G[Extract STDERR Logs]
+    G --> H[Gemini AI Classification]
+    H --> I[Inject Code Patch]
+    I -->|Retry| E
+    E -->|Max Retries Exceeded| J([❌ Non-Buildable Verdict])
+```
 
-## Module Responsibilities
-The codebase is divided into clear functional zones without cross-coupling:
+## 🛠 Technology Stack
+- **Core Orchestration:** TypeScript, Node.js (Pi Engine)
+- **Containerization:** Docker Desktop, Docker CLI integration
+- **AI Intelligence:** Gemini 2.5 Flash via Google Generative Language API
+- **Execution Strategy:** Stateless, decoupled "Skills" architecture
+- **State Management:** Ephemeral YAML memory & sandbox lifecycles
 
-- **`src/engine/pi_engine.ts`**: The core orchestrator. Manages state transitions and strictly enforces the 3-cycle retry limit.
-- **`src/engine/memory.ts`**: Handles YAML persistence for per-repo history.
-- **`src/docker/container_mgr.ts`**: Spins up and aggressively tears down ephemeral Docker Compose sandboxes.
+## 🎮 Run the Demo
+Experience the autonomous repair loop live against a real repository:
 
-### Stateless Skills (`src/skills/`)
-Each skill is 100% independent. A skill accepts a typed input, performs work, and returns a typed output.
-- **`repo_fetch`**: Handles git cloning, directory parsing, and GitHub metadata.
-- **`structure_analyze`**: Detects language, framework, and config requirements.
-- **`build_runner`**: Executes install/build inside Docker; captures `stdout`/`stderr`.
-- **`error_classifier`**: Interfaces with Claude API to convert raw logs into typed JSON error categories.
-- **`auto_fix`**: Applies deterministic fixes (e.g., generating a `.env` file or patching a dependency version) mapped from the AI classification.
-- **`report_gen`**: Generates the final structured Markdown summary.
+```bash
+# Clone and install dependencies
+git clone https://github.com/spbarathg/repoClaw.git
+cd RepoClaw
+npm install
 
-## Intended Runtime Behavior
-1. **Trigger:** User sends `analyze <url>` via chat.
-2. **Isolate:** Repository is cloned to `sandboxes/<job_id>`.
-3. **Try:** Agent attempts to build the project inside an isolated container.
-4. **Classify & Fix:** If failed, `stderr` is classified by Claude into a discrete error category, and a deterministic patch is applied to the codebase.
-5. **Retry:** The build is attempted again (up to 3 limits).
-6. **Report:** The final markdown report is delivered to the originating chat.
-7. **Cleanup:** The sandbox directory and container are forcefully destroyed.
+# Compile the TypeScript engine
+npx tsc --noEmit
 
-## Local Setup Expectations
-### Prerequisites
-- **Node.js**: v22 or higher
-- **Docker**: Docker and Docker Compose must be installed and running on the host.
-- **API Keys**: Anthropic Claude API key, and Bot tokens (Telegram/Discord).
+# Launch the autonomous demo against a target repository
+npm run demo https://github.com/developit/mitt
+```
 
-### Initialization
-1. Clone the repository.
-2. Run `npm install` to load core dependencies.
-3. Configure the `.env` file with required API keys.
-4. Run the bootloader to start the Gateway and Pi Engine listeners.
+## 📄 Sample Verdict Artifact
+Upon completion, RepoClaw generates a detailed markdown report outlining its findings. It includes:
+- **Repository Intelligence:** Inferred architecture and build commands.
+- **Correction Cycle Log:** A table detailing the exact AI classifications, confidence scores, and patches applied.
+- **Final AI Reasoning:** A human-readable conclusion explaining exactly *why* the repository passed or failed (e.g., distinguishing between a syntax error and a broken infrastructure timeout).
 
-## Development Notes
-- **Product Requirements:** Refer to `REPOCLAW_PRODUCT_SPEC.md` as the absolute source of truth.
-- **Execution Roadmap:** Track live implementation progress in `repoclaw-plan.md`.
-- **Engineering Constitution:** You **must** read and adhere to `MASTER_AGENT_RULES.md` before making any codebase modifications. Deviations from the stateless architecture or Docker isolation are considered catastrophic failures.
+*Check out the [sample_demo_output.md](docs/sample_demo_output.md) for a real-world example.*
+
+## 💡 Why This Matters
+Developer productivity is crippled by "works on my machine" syndrome and abandoned open-source projects. RepoClaw bridges the gap between raw, unmaintained code and an immediately usable asset. By shifting the burden of environment configuration and dependency resolution to an AI agent, developers save hours of frustrating setup time.
+
+## 🔮 Future Scalability
+RepoClaw is designed as a foundational, OpenClaw-native building block. Its stateless skill architecture allows for infinite horizontal scaling. Future iterations will support:
+- Deep monorepo scanning and multi-service orchestration.
+- Seamless WebSocket ingress for real-time CI/CD pipeline integration.
+- Expanded language support (Rust, Go, C++) with dedicated compiler heuristic models.
