@@ -34,7 +34,7 @@ ${stderr.slice(-5000)}
           const response = await axios.post(url, {
             contents: [{ parts: [{ text: promptPayload }] }],
             generationConfig: { responseMimeType: "application/json" }
-          });
+          }, { timeout: 30000 });
 
           if (response.data && response.data.candidates && response.data.candidates[0].content.parts[0].text) {
             let jsonStr = response.data.candidates[0].content.parts[0].text;

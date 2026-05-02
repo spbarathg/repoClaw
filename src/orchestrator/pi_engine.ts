@@ -1,5 +1,6 @@
 import { AnalysisRequest, JobState, ConfidenceMatrix } from '../types';
 import { logger } from '../utils/logger';
+import * as crypto from 'crypto';
 import { repoFetch } from '../skills/repo_fetch';
 import { structureAnalyze } from '../skills/structure_analyze';
 import { buildRunner } from '../skills/build_runner';
@@ -108,7 +109,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     protocolIdentity: {
       version: 'CLAW-R7',
       sandboxImage: 'repoclaw-sandbox:alpine',
-      fingerprint: require('crypto').createHash('sha256').update(jobId + request.url).digest('hex').substring(0, 16).toUpperCase(),
+      fingerprint: crypto.createHash('sha256').update(jobId + request.url).digest('hex').substring(0, 16).toUpperCase(),
       buildChainSignature: 'VERIFIED_ISOLATED'
     }
   };
@@ -130,6 +131,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
      }
   };
 
+  logger.info(`Pi Engine Run Initiated for URL: ${request.url}`);
   logger.banner('REPOCLAW AI PIPELINE INITIATED');
   notify(`[Pi Engine] Job ID Allocated: ${jobState.jobId}`, 'initializing secure pipeline');
   notify(`[Pi Engine] Target Origin: ${request.url}`, 'establishing secure uplink to target origin');

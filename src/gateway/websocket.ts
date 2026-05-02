@@ -5,7 +5,7 @@
 import { logger } from '../utils/logger';
 import { handleIncomingRequest } from './routing';
 import { normalizeInput } from '../adapters/protocol';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { config } from '../config';
 
 import { getGlobalHistory } from '../orchestrator/memory';
@@ -16,19 +16,11 @@ export const startWebSocketServer = () => {
   wss.on('connection', async (ws) => {
     logger.info('New WebSocket client connected.');
     
-    try {
-      const history = await getGlobalHistory();
-      ws.send(JSON.stringify({ status: 'HISTORY_SYNC', history }));
-    } catch (e) {
-      logger.error('Failed to send history sync', { error: e });
-    }
-
     ws.on('message', async (message) => {
       try {
         const payload = JSON.parse(message.toString());
         logger.debug('Received WS Payload', payload);
         
-        // If this is just a ping or history request, handle it
         if (payload.action === 'GET_HISTORY') {
           const history = await getGlobalHistory();
           ws.send(JSON.stringify({ status: 'HISTORY_SYNC', history }));
@@ -43,7 +35,7 @@ export const startWebSocketServer = () => {
         ws.send(JSON.stringify({ status: 'ACK', message: `Job accepted for ${request.url}` }));
         
         const onProgress = (msg: string, meta?: any) => {
-           if (ws.readyState === ws.OPEN) {
+           if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ status: 'PROGRESS', message: msg, meta }));
            }
         };
@@ -81,6 +73,13 @@ export const startWebSocketServer = () => {
         ws.send(JSON.stringify({ status: 'ERROR', error: err.message }));
       }
     });
+
+    try {
+      const history = await getGlobalHistory();
+      ws.send(JSON.stringify({ status: 'HISTORY_SYNC', history }));
+    } catch (e) {
+      logger.error('Failed to send history sync', { error: e });
+    }
 
     ws.on('close', () => {
       logger.info('WebSocket client disconnected.');

@@ -234,9 +234,15 @@ export function useRepoClawSocket() {
 
       ws.onopen = () => {
         logStore.clear();
-        ws.send(JSON.stringify({ url }));
         setState((prev) => ({ ...prev, status: 'RUNNING' }));
         appendLog(`[SYSTEM] WebSocket Link Established. Instructing Pi Engine on ${url}...`);
+        
+        // Small delay to ensure backend has registered the message listener
+        setTimeout(() => {
+           if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ url }));
+           }
+        }, 100);
       };
 
       ws.onmessage = (event) => {
