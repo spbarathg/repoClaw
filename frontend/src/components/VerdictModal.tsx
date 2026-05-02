@@ -1,12 +1,12 @@
 import type { RepoClawState } from '../hooks/useRepoClawSocket';
-import { X, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, Code2, Terminal, Layers, Cpu, Server, Lock, Activity, Eye, Play, OctagonX } from 'lucide-react';
+import { X, ShieldCheck, ShieldAlert, AlertTriangle, XCircle, Code2, Terminal, Layers, Cpu, Server, Lock, Activity, Eye, Play, OctagonX, BadgeCheck, FileWarning } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useEffect, useMemo, memo } from 'react';
 import { parseMarkdownReport } from '../utils/reportParser';
 
 export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const { stage, verdict, report, confidence, jobId, targetUrl } = state;
+  const { stage, verdict, report, confidence, jobId, targetUrl, commandMutations, confidenceMatrix } = state;
 
   useEffect(() => {
     if (stage === 'VERDICT' && verdict && report) {
@@ -16,7 +16,6 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
 
   const parsed = useMemo(() => parseMarkdownReport(report), [report]);
 
-  // --- ALL VALUES FROM BACKEND STATE, NO HARDCODED BUCKETS ---
   const forensicScore = state.forensicScore;
   const scoreGrade = state.scoreGrade;
   
@@ -26,35 +25,39 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
   const isUnsupported = verdict === 'UNSUPPORTED_ARCHITECTURE';
   const isTerminal = verdict === 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY';
   
-  // Color/icon mapping based on verdict (styling only, not data)
   let color = 'text-claw-red';
   let glow = 'text-glow-red';
   let bgGlow = 'bg-claw-red/10 border-claw-red/30';
   let Icon = XCircle;
   let sub = 'NON-BUILDABLE / FATAL';
+  let certificationText = 'FORENSIC BUILD FAILURE CONFIRMED';
 
   if (isSuccess) { 
     color = 'text-claw-emerald'; glow = 'text-glow-emerald'; bgGlow = 'bg-claw-emerald/10 border-claw-emerald/30'; 
     Icon = ShieldCheck; sub = 'BUILDABLE / PRISTINE'; 
+    certificationText = 'REPOSITORY CERTIFIED UNDER AUTONOMOUS BUILD PROTOCOL';
   }
   else if (isFixable) { 
     color = 'text-yellow-400'; glow = 'text-glow'; bgGlow = 'bg-yellow-400/10 border-yellow-400/30'; 
     Icon = AlertTriangle; sub = 'FIXABLE / PATCHED'; 
+    certificationText = 'REPOSITORY CERTIFIED UNDER AUTONOMOUS BUILD PROTOCOL (PATCHED)';
   }
   else if (isUnsupported) {
     color = 'text-slate-400'; glow = ''; bgGlow = 'bg-slate-500/10 border-slate-500/30';
     Icon = Layers; sub = 'STATIC / META ARCHITECTURE';
+    certificationText = 'STATIC ARCHITECTURE / NO EXECUTION SURFACE';
   }
   else if (isInfra) { 
     color = 'text-orange-500'; glow = 'text-glow-orange'; bgGlow = 'bg-orange-500/10 border-orange-500/30'; 
     Icon = ShieldAlert; sub = 'INFRASTRUCTURE ERROR'; 
+    certificationText = 'INFRASTRUCTURE OR RUNTIME ENVIRONMENT FAILURE';
   }
   else if (isTerminal) {
     color = 'text-rose-500'; glow = 'text-glow-red'; bgGlow = 'bg-rose-500/10 border-rose-500/30';
     Icon = OctagonX; sub = 'TERMINAL UNRESOLVED';
+    certificationText = 'TERMINAL BUILD FAILURE / LOOP EXHAUSTED';
   }
 
-  // Compute a real fingerprint from jobId + URL (deterministic hash)
   const fingerprint = useMemo(() => {
     if (!jobId || !targetUrl) return 'PENDING';
     let hash = 0;
@@ -72,7 +75,6 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
       {isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 lg:p-8">
           
-          {/* Heavy Backdrop Takeover */}
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
@@ -86,15 +88,12 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 100, scale: 0.9 }}
             transition={{ type: "spring", stiffness: 150, damping: 20 }}
-            className={`glass-panel-heavy border border-white/10 ring-1 ring-white/5 shadow-[0_0_120px_rgba(0,0,0,0.8)] w-[88vw] h-[82vh] flex flex-col relative z-10 overflow-hidden rounded-3xl bg-[#030305]`}
+            className={`glass-panel-heavy border border-white/10 ring-1 ring-white/5 shadow-[0_0_120px_rgba(0,0,0,0.8)] w-[92vw] h-[86vh] flex flex-col relative z-10 overflow-hidden rounded-3xl bg-[#030305]`}
           >
-            {/* Cyber Grid Background */}
             <div className="absolute inset-0 cyber-grid-bg opacity-30 pointer-events-none" />
             
-            {/* Horizontal One-Time Scanline */}
             <div className="scanline-horizontal" />
 
-            {/* CLASSIFIED Ambient Watermark & HUD Shimmer */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden flex items-center justify-center opacity-5 select-none z-0 mix-blend-overlay">
                <div className="text-[120px] font-black font-sans tracking-[0.2em] transform -rotate-12 whitespace-nowrap">
                  REPOCLAW FORENSIC SYSTEM // CLASSIFIED
@@ -102,12 +101,18 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/5 to-transparent animate-beam" />
             </div>
 
+            {/* Certification Banner */}
+            <div className={`w-full py-2 flex items-center justify-center gap-4 ${bgGlow} shrink-0`}>
+              {isSuccess || isFixable ? <BadgeCheck size={18} className={color} /> : <FileWarning size={18} className={color} />}
+              <span className={`text-[11px] font-mono tracking-[0.4em] font-bold uppercase ${color}`}>{certificationText}</span>
+              {isSuccess || isFixable ? <BadgeCheck size={18} className={color} /> : <FileWarning size={18} className={color} />}
+            </div>
+
             {/* Header / Hero Band */}
-            <div className={`relative p-8 border-b border-white/5 bg-gradient-to-r from-black/80 to-transparent flex items-center justify-between shrink-0 overflow-hidden ${bgGlow}`}>
+            <div className={`relative p-8 border-b border-white/5 bg-gradient-to-r from-black/80 to-transparent flex items-center justify-between shrink-0 overflow-hidden`}>
               <div className="absolute top-0 left-0 w-1 h-full bg-current opacity-50" />
               
               <div className="flex items-center gap-8 relative z-10">
-                {/* Giant Grade — from computed backend score */}
                 <motion.div 
                   initial={{ rotateY: 90 }}
                   animate={{ rotateY: 0 }}
@@ -137,7 +142,7 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
               </button>
             </div>
 
-            {/* Readiness Badge Strip — reflects actual state */}
+            {/* Readiness Badge Strip */}
             <div className="flex items-center gap-1 p-2 bg-black/90 border-b border-white/5 shrink-0 overflow-x-auto custom-scrollbar relative z-10">
                <div className="flex items-center gap-2 px-4 py-1 border border-white/10 rounded-full text-[9px] font-mono tracking-widest text-slate-400 bg-white/5 whitespace-nowrap"><Lock size={10} className="text-claw-cyan" /> ZERO_TRUST_SANDBOX</div>
                <div className={`flex items-center gap-2 px-4 py-1 border rounded-full text-[9px] font-mono tracking-widest whitespace-nowrap ${state.interventionsAttempted > 0 ? 'border-claw-cyan/30 text-claw-cyan bg-claw-cyan/10' : 'border-white/10 text-slate-400 bg-white/5'}`}><Cpu size={10} /> AUTO_PATCH: {state.interventionsAttempted > 0 ? `${state.interventionsAttempted} DEPLOYED` : 'STANDBY'}</div>
@@ -163,14 +168,43 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                      </div>
                    ) : (
                      <>
+                       {/* Command Mutations Transparent Log */}
+                       {commandMutations && commandMutations.length > 0 && (
+                         <div className="mb-8">
+                           <div className="text-sm font-sans tracking-widest text-slate-400 uppercase border-b border-white/10 pb-4 flex items-center gap-3 mb-4">
+                              <Terminal size={18} className="text-claw-cyan" /> 
+                              Command Intervention Diffs
+                           </div>
+                           <div className="space-y-4">
+                             {commandMutations.map((mut, idx) => (
+                               <div key={idx} className="bg-black/40 border border-white/5 rounded-lg p-4 font-mono text-xs">
+                                 <div className="flex justify-between items-center mb-3 border-b border-white/5 pb-2">
+                                   <span className="text-claw-cyan tracking-widest uppercase">CYCLE {mut.cycle} - {mut.type} MUTATION</span>
+                                   <span className="text-slate-500">Asset: {mut.asset}</span>
+                                 </div>
+                                 <div className="grid grid-cols-1 gap-2">
+                                   <div className="flex">
+                                     <span className="w-16 text-slate-500 select-none">- PRE:</span>
+                                     <span className="text-red-400/80 line-through truncate">{mut.before || '(empty)'}</span>
+                                   </div>
+                                   <div className="flex">
+                                     <span className="w-16 text-slate-500 select-none">+ POST:</span>
+                                     <span className="text-claw-emerald truncate">{mut.after}</span>
+                                   </div>
+                                 </div>
+                               </div>
+                             ))}
+                           </div>
+                         </div>
+                       )}
+
                        <div className="text-sm font-sans tracking-widest text-slate-400 uppercase border-b border-white/10 pb-4 flex items-center gap-3">
                           <Activity size={18} className="text-claw-cyan" /> 
-                          Autonomous Intervention Timeline
+                          Diagnostics Timeline
                        </div>
 
                        {parsed.cycles.length > 0 ? (
                          <div className="flex flex-col gap-10 relative mt-4">
-                            {/* Cinematic vertical glowing spine */}
                             <div className="absolute left-[27px] top-4 bottom-4 w-[2px] bg-gradient-to-b from-claw-cyan via-claw-purple to-transparent opacity-40 shadow-[0_0_15px_#00f0ff]" />
                             
                             {parsed.cycles.map((cycle, idx) => (
@@ -205,7 +239,6 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                 {/* Right: Stacked Intelligence Cards */}
                 <div className="col-span-1 lg:col-span-4 flex flex-col gap-6">
                    
-                   {/* 1. Detected Stack — from backend */}
                    <div className="pb-4 border-b border-white/5">
                       <div className="text-[10px] font-mono tracking-widest text-slate-500 mb-2 uppercase flex items-center gap-2">
                          <Layers size={14} /> Detected Stack
@@ -214,7 +247,6 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                       <div className="text-xs font-mono text-slate-600 mt-2">FINGERPRINT: {fingerprint}</div>
                    </div>
 
-                   {/* 2. Buildability Score — COMPUTED, not hardcoded */}
                    <div className="pb-4 border-b border-white/5">
                       <div className="text-[10px] font-mono tracking-widest text-slate-500 mb-3 uppercase flex items-center justify-between">
                          <span className="flex items-center gap-2"><Cpu size={14} /> Forensic Score</span>
@@ -232,7 +264,32 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                       </div>
                    </div>
 
-                   {/* 3. Root Cause Vector — from backend errorCategory */}
+                   {/* Confidence Matrix Compact View */}
+                   {confidenceMatrix && (
+                     <div className="pb-4 border-b border-white/5">
+                        <div className="text-[10px] font-mono tracking-widest text-slate-500 mb-3 uppercase flex items-center gap-2">
+                           <Activity size={14} /> Intelligence Matrix
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs font-mono text-slate-300">
+                            <span>Manifest Integrity</span><span className={confidenceMatrix.manifestIntegrity >= 70 ? "text-claw-cyan" : "text-orange-400"}>{confidenceMatrix.manifestIntegrity}%</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-mono text-slate-300">
+                            <span>Dependency Stability</span><span className={confidenceMatrix.dependencyStability >= 70 ? "text-claw-emerald" : "text-orange-400"}>{confidenceMatrix.dependencyStability}%</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-mono text-slate-300">
+                            <span>Build Surface</span><span className={confidenceMatrix.buildSurface >= 70 ? "text-claw-purple" : "text-orange-400"}>{confidenceMatrix.buildSurface}%</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-mono text-slate-300">
+                            <span>Recoverability</span><span className={confidenceMatrix.recoverability >= 70 ? "text-yellow-400" : "text-red-400"}>{confidenceMatrix.recoverability}%</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-mono text-slate-300">
+                            <span>Environment Risk</span><span className={confidenceMatrix.environmentRisk <= 30 ? "text-claw-emerald" : "text-red-500"}>{confidenceMatrix.environmentRisk}%</span>
+                          </div>
+                        </div>
+                     </div>
+                   )}
+
                    <div className="pb-4 border-b border-white/5">
                       <div className="text-[10px] font-mono tracking-widest text-slate-500 mb-3 uppercase flex items-center gap-2">
                          <Activity size={14} /> Root Cause Vector
@@ -248,11 +305,28 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                             <span>Vector Cascade: NONE</span>
                           </li>
                         </ul>
+                      ) : isFixable ? (
+                        <ul className="text-sm font-sans text-slate-300 space-y-3 pl-1">
+                          <li className="flex items-start gap-3">
+                            <span className="text-yellow-400 mt-1">&#10003;</span>
+                            <span>Primary Anomaly: <span className="text-yellow-400">{state.errorCategory || 'RESOLVED'}</span></span>
+                          </li>
+                          <li className="flex items-start gap-3">
+                            <span className="text-yellow-400 mt-1">&#10003;</span>
+                            <span>Status: <span className="text-claw-emerald">AUTONOMOUSLY PATCHED</span></span>
+                          </li>
+                          {confidence != null && (
+                            <li className="flex items-start gap-3">
+                              <span className="text-slate-500 mt-1">&#8226;</span>
+                              <span>Confidence: {confidence}%</span>
+                            </li>
+                          )}
+                        </ul>
                       ) : (
                         <ul className="text-sm font-sans text-slate-300 space-y-3 pl-1">
                           <li className="flex items-start gap-3">
                             <span className="text-slate-500 mt-1">•</span>
-                            <span>Primary Anomaly: <span className="text-claw-red">{state.errorCategory || (isUnsupported ? 'N/A' : 'PENDING')}</span></span>
+                            <span>Primary Anomaly: <span className="text-claw-red">{state.errorCategory || (isUnsupported ? 'N/A' : 'UNRESOLVED')}</span></span>
                           </li>
                           <li className="flex items-start gap-3">
                             <span className="text-slate-500 mt-1">•</span>
@@ -262,7 +336,6 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
                       )}
                    </div>
 
-                   {/* 4. Machine Recommendation — from parsed report */}
                    <div className="flex-1 flex flex-col">
                       <div className="text-[10px] font-mono tracking-widest text-slate-500 mb-3 uppercase flex items-center gap-2">
                          <AlertTriangle size={14} /> Machine Recommendation
@@ -293,7 +366,7 @@ export const VerdictModal: React.FC<{ state: RepoClawState }> = memo(({ state })
             {/* Footer */}
             <div className="p-4 border-t border-white/10 bg-black/80 shrink-0 flex items-center justify-between">
                <div className="text-[9px] font-mono text-slate-600 tracking-widest">
-                  REPOCLAW // FORENSIC DOSSIER // {state.interventionsAttempted || 0} INTERVENTIONS // {state.generatedAssets?.length || 0} PAYLOADS // SCORE: {scoreGrade === 'N/A' || scoreGrade === 'I' ? 'N/A' : forensicScore}/{scoreGrade} // FP-{fingerprint}
+                  REPOCLAW // FORENSIC DOSSIER // {state.interventionsAttempted || 0} INTERVENTIONS // SCORE: {scoreGrade === 'N/A' || scoreGrade === 'I' ? 'N/A' : forensicScore}/{scoreGrade} // FP-{fingerprint}
                </div>
                <button 
                  onClick={() => setIsOpen(false)}

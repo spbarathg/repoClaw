@@ -9,6 +9,38 @@ export interface AnalysisRequest {
   chatId: string;
 }
 
+export interface ConfidenceMatrix {
+  manifestIntegrity: number;
+  dependencyStability: number;
+  buildSurface: number;
+  recoverability: number;
+  environmentRisk: number;
+}
+
+export interface CommandMutation {
+  cycle: number;
+  type: 'INSTALL' | 'BUILD';
+  before: string;
+  after: string;
+  asset: string;
+}
+
+export interface IntelligenceLedgerEntry {
+  jobId: string;
+  url: string;
+  category: string;
+  verdict: string;
+  score: number;
+  timestamp: string;
+}
+
+export interface ProtocolIdentity {
+  version: string;
+  sandboxImage: string;
+  fingerprint: string;
+  buildChainSignature: string;
+}
+
 export interface JobState {
   jobId: string;
   url: string;
@@ -26,6 +58,9 @@ export interface JobState {
   forensicScore: number;
   scoreGrade: string;
   patchMutationLog: string[];
+  confidenceMatrix?: ConfidenceMatrix;
+  commandMutations: CommandMutation[];
+  protocolIdentity?: ProtocolIdentity;
 }
 
 export interface TechStack {
@@ -55,4 +90,5 @@ export interface ErrorCategory {
 export interface FixStrategyResult {
   patched: boolean;
   details: string;
+  generatedFilename?: string;
 }

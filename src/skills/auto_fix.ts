@@ -339,5 +339,5 @@ export const autoFix = async (state: JobState, error: ErrorCategory): Promise<Fi
     details = `Patch failure exception: ${err.message}`;
   }
 
-  return { patched, details };
+  return { patched, details, generatedFilename };
 };

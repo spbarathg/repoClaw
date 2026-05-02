@@ -3,7 +3,7 @@ import { Play, Activity, Radar } from 'lucide-react';
 import type { RepoClawState } from '../hooks/useRepoClawSocket';
 
 export const HeroInput: React.FC<{ onAnalyze: (url: string) => void, state: RepoClawState }> = memo(({ onAnalyze, state }) => {
-  const [url, setUrl] = useState('https://github.com/developit/mitt');
+  const [url, setUrl] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

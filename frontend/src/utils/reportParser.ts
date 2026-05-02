@@ -48,18 +48,19 @@ export const parseMarkdownReport = (markdown: string | null): ParsedReport => {
   const gradeMatch = markdown.match(/\*\*Grade:\*\*\s*(.+)/);
   if (gradeMatch) defaultReport.scoreGrade = gradeMatch[1].trim();
 
-  // Extract Cycles — updated to match new table format
-  const cyclesSection = markdown.match(/\| Cycle \| Classified Error \| Confidence \| Severity \| Retry Viable \|\n\|[-\s|]+\|\n([\s\S]+?)(?:\n---|\n###|\n####)/);
+  // Extract Cycles — match both 5-column and 4-column table formats
+  const cyclesSection = markdown.match(/\| Cycle \| Classified Error \| Confidence \| Severity \| Retry Viable \|\n\|[-\s|]+\|\n([\s\S]+?)(?:\n---|\n###|\n####)/) 
+    || markdown.match(/\| Cycle \| Classified Error \| Confidence \| Patch Applied \|\n\|[-\s|]+\|\n([\s\S]+?)(?:\n---|\n###|\n####)/);
   if (cyclesSection && cyclesSection[1]) {
     const rows = cyclesSection[1].split('\n').filter(line => line.trim().startsWith('|'));
     rows.forEach(row => {
       const parts = row.split('|').map(p => p.trim()).filter(Boolean);
-      if (parts.length >= 4) {
+      if (parts.length >= 3) {
         defaultReport.cycles.push({
           cycle: parts[0].replace(/\*\*/g, ''),
           error: parts[1].replace(/`/g, ''),
           confidence: parts[2],
-          patch: `${parts[3]} | Retry: ${parts[4] || 'N/A'}`
+          patch: parts.length >= 5 ? `${parts[3]} | Retry: ${parts[4] || 'N/A'}` : parts[3] || 'N/A'
         });
       }
     });

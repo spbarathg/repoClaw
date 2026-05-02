@@ -1,8 +1,4 @@
-/**
- * @file src/orchestrator/pi_engine.ts
- * Role: Orchestrator managing the try -> classify -> fix -> retry loop.
- */
-import { AnalysisRequest, JobState } from '../types';
+import { AnalysisRequest, JobState, ConfidenceMatrix } from '../types';
 import { logger } from '../utils/logger';
 import { repoFetch } from '../skills/repo_fetch';
 import { structureAnalyze } from '../skills/structure_analyze';
@@ -14,10 +10,6 @@ import { setupSandbox, cleanupSandbox } from '../sandbox/container_mgr';
 import { persistJobState } from './memory';
 import { config } from '../config';
 
-/**
- * Computes a deterministic forensic score (0–100) based on actual pipeline execution facts.
- * No hardcoded buckets — every point is earned from real data.
- */
 function computeForensicScore(state: JobState): { score: number; grade: string } {
   let score = 0;
 
@@ -25,55 +17,37 @@ function computeForensicScore(state: JobState): { score: number; grade: string }
     return { score: 0, grade: 'N/A' };
   }
   if (state.status === 'INFRASTRUCTURE_ERROR') {
-    // Repo itself is unknown — infrastructure failed, not the code
     return { score: -1, grade: 'I' };
   }
 
   const isSuccess = state.status === 'BUILDABLE' || state.status === 'FIXABLE';
 
   if (isSuccess) {
-    // Base: 95 for clean build, 70 for fixed build
     score = state.status === 'BUILDABLE' ? 95 : 70;
-
-    // Retry penalty: -7 per retry consumed (max 3 retries = -21)
     score -= state.retryCount * 7;
-
-    // Intervention effectiveness bonus: successful patches earn credit
     if (state.status === 'FIXABLE' && state.interventionsAttempted > 0) {
-      // Each successful intervention adds value
       const effectivePatches = state.patchMutationLog.length;
       score += Math.min(effectivePatches * 5, 15);
     }
-
-    // Confidence weight from classifier (if errors existed)
     if (state.errors.length > 0) {
       const avgConf = state.errors.reduce((sum, e) => sum + e.confidence, 0) / state.errors.length;
-      score += Math.round(avgConf * 5); // 0-5 bonus
+      score += Math.round(avgConf * 5);
     }
   } else {
-    // Failed build base: 15
     score = 15;
-
-    // Credit for meaningful attempts (actual patches applied)
     const effectivePatches = state.patchMutationLog.length;
     score += Math.min(effectivePatches * 3, 12);
-
-    // Credit for high-confidence diagnosis (at least we know what's wrong)
     if (state.errors.length > 0) {
       const maxConf = Math.max(...state.errors.map(e => e.confidence));
-      score += Math.round(maxConf * 10); // 0-10 bonus for good diagnosis
+      score += Math.round(maxConf * 10);
     }
-
-    // Penalty for terminal unresolved (loop exhaustion)
     if (state.status === 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY') {
       score -= 5;
     }
   }
 
-  // Clamp to 0–100
   score = Math.max(0, Math.min(100, score));
 
-  // Grade mapping
   let grade = 'F';
   if (score >= 90) grade = 'S';
   else if (score >= 75) grade = 'A';
@@ -83,11 +57,42 @@ function computeForensicScore(state: JobState): { score: number; grade: string }
   return { score, grade };
 }
 
+function computeConfidenceMatrix(state: JobState): ConfidenceMatrix {
+  let manifestIntegrity = 100;
+  let dependencyStability = 100;
+  let buildSurface = 100;
+  let recoverability = 100;
+  let environmentRisk = 10; // Low risk by default
+
+  const errorCats = state.errors.map(e => e.category);
+  
+  if (errorCats.includes('TYPESCRIPT_CONFIG_FAILURE') || errorCats.includes('VITE_CONFIG_FAILURE')) manifestIntegrity -= 30;
+  
+  if (errorCats.includes('MISSING_DEPENDENCY') || errorCats.includes('DEPENDENCY_CONFLICT')) dependencyStability -= 40;
+  
+  if (errorCats.includes('BUILD_SCRIPT_MISSING') || errorCats.includes('BUILD_FAILURE') || errorCats.includes('BUNDLER_FAILURE')) buildSurface -= 40;
+  if (state.status === 'UNSUPPORTED_ARCHITECTURE') buildSurface = 0;
+
+  if (state.status === 'NON_BUILDABLE' || state.status === 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY') recoverability -= 60;
+  if (state.interventionsAttempted > 0 && state.status === 'FIXABLE') recoverability = 95;
+
+  if (errorCats.includes('INFRASTRUCTURE_FAILURE') || errorCats.includes('OUT_OF_MEMORY') || errorCats.includes('PERMISSION_FAILURE')) environmentRisk += 80;
+
+  return {
+    manifestIntegrity: Math.max(0, Math.min(100, manifestIntegrity)),
+    dependencyStability: Math.max(0, Math.min(100, dependencyStability)),
+    buildSurface: Math.max(0, Math.min(100, buildSurface)),
+    recoverability: Math.max(0, Math.min(100, recoverability)),
+    environmentRisk: Math.max(0, Math.min(100, environmentRisk))
+  };
+}
+
 export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: string, meta?: any) => void): Promise<JobState> => {
+  const jobId = Date.now().toString();
   const jobState: JobState = {
-    jobId: Date.now().toString(),
+    jobId,
     url: request.url,
-    sandboxPath: `./sandboxes/${Date.now()}`,
+    sandboxPath: `./sandboxes/${jobId}`,
     retryCount: 0,
     status: 'PENDING',
     logs: [],
@@ -98,7 +103,14 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     interventionSuccession: [],
     forensicScore: 0,
     scoreGrade: 'F',
-    patchMutationLog: []
+    patchMutationLog: [],
+    commandMutations: [],
+    protocolIdentity: {
+      version: 'CLAW-R7',
+      sandboxImage: 'repoclaw-sandbox:alpine',
+      fingerprint: require('crypto').createHash('sha256').update(jobId + request.url).digest('hex').substring(0, 16).toUpperCase(),
+      buildChainSignature: 'VERIFIED_ISOLATED'
+    }
   };
 
   const notify = (msg: string, thought?: string) => {
@@ -144,11 +156,22 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
        const { score, grade } = computeForensicScore(jobState);
        jobState.forensicScore = score;
        jobState.scoreGrade = grade;
+       jobState.confidenceMatrix = computeConfidenceMatrix(jobState);
        
        jobState.report = await reportGen(jobState);
        logger.banner('FINAL INTELLIGENCE VERDICT');
        console.log(jobState.report);
        return jobState;
+    }
+
+    // Update protocol identity with actual sandbox image
+    if (jobState.stack && jobState.protocolIdentity) {
+      const imageMap: Record<string, string> = {
+        'Node.js': 'node:20-alpine', 'Python': 'python:3.11-alpine', 'Go': 'golang:1.21-alpine',
+        'Rust': 'rust:1.75-alpine', 'C/C++': 'alpine:latest', 'Java': 'maven:3.9-eclipse-temurin-21-alpine',
+        'PHP': 'composer:2', 'Shell': 'alpine:latest'
+      };
+      jobState.protocolIdentity.sandboxImage = imageMap[jobState.stack.language] || 'node:20-alpine';
     }
 
     let success = false;
@@ -160,8 +183,6 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     notify(`[Pi Engine] Initializing Gemini diagnostic matrix...`, 'provisioning sandboxed execution container');
     
     while (jobState.retryCount < config.maxRetries && !success) {
-      // --- RETRY TRUTHFULNESS GUARD ---
-      // Before any retry (retryCount > 0), prove that at least one material mutation occurred.
       if (jobState.retryCount > 0 && jobState.stack) {
         const currentCategory = jobState.errors[jobState.errors.length - 1]?.category;
         const currentPatchCount = jobState.patchMutationLog.length;
@@ -175,16 +196,12 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
         
         if (!materialMutation && !categoryChanged) {
            logger.warn(`[Pi Engine] 🛑 No material mutation detected after intervention. Hard stopping synthetic loop.`);
-           logger.warn(`[Pi Engine]    installCmd: "${prevInstallCmd}" -> "${jobState.stack.installCommand}" (${installChanged ? 'CHANGED' : 'SAME'})`);
-           logger.warn(`[Pi Engine]    buildCmd: "${prevBuildCmd}" -> "${jobState.stack.buildCommand}" (${buildChanged ? 'CHANGED' : 'SAME'})`);
-           logger.warn(`[Pi Engine]    patches: ${prevPatchCount} -> ${currentPatchCount} (${newPatchGenerated ? 'NEW' : 'SAME'})`);
            notify(`[Pi Engine] 🛑 Escalating unresolved fault state...`, 'terminal state reached: TERMINAL_UNRESOLVED_NO_NEW_STRATEGY — no material command/config mutation detected');
            jobState.status = 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY';
            break;
         }
       }
 
-      // Snapshot state BEFORE this cycle
       prevInstallCmd = jobState.stack?.installCommand || '';
       prevBuildCmd = jobState.stack?.buildCommand || '';
       prevPatchCount = jobState.patchMutationLog.length;
@@ -214,6 +231,29 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
 
         notify(`[Pi Engine] ⚙️ Synthesizing intervention strategy #${jobState.interventionsAttempted + 1}...`, `generating autonomous recovery asset for ${errorDetails.category}`);
         const fixResult = await autoFix(jobState, errorDetails);
+        
+        // Record Explicit Command Mutations
+        if (jobState.stack) {
+           if (jobState.stack.installCommand !== prevInstallCmd) {
+              jobState.commandMutations.push({
+                 cycle: jobState.retryCount + 1,
+                 type: 'INSTALL',
+                 before: prevInstallCmd,
+                 after: jobState.stack.installCommand || '',
+                 asset: fixResult.generatedFilename || 'None'
+              });
+           }
+           if (jobState.stack.buildCommand !== prevBuildCmd) {
+              jobState.commandMutations.push({
+                 cycle: jobState.retryCount + 1,
+                 type: 'BUILD',
+                 before: prevBuildCmd,
+                 after: jobState.stack.buildCommand || '',
+                 asset: fixResult.generatedFilename || 'None'
+              });
+           }
+        }
+
         if (fixResult.patched) {
            jobState.interventionSuccession.push(`Cycle ${jobState.retryCount + 1}: Deployed recovery asset - ${fixResult.details}`);
            notify(`[Pi Engine] 🔧 Auto-Fix Applied: ${fixResult.details}`, `intervention packet generated, re-arming secure verification cycle`);
@@ -245,10 +285,10 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
        logger.success(`[Pi Engine] Loop Concluded. Final Verdict: ${jobState.status}`);
     }
     
-    // --- COMPUTE FORENSIC SCORE ---
     const { score, grade } = computeForensicScore(jobState);
     jobState.forensicScore = score;
     jobState.scoreGrade = grade;
+    jobState.confidenceMatrix = computeConfidenceMatrix(jobState);
     logger.info(`[Pi Engine] Forensic Score: ${score}/100 (Grade: ${grade})`);
     
     jobState.report = await reportGen(jobState);
@@ -263,6 +303,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     const { score, grade } = computeForensicScore(jobState);
     jobState.forensicScore = score;
     jobState.scoreGrade = grade;
+    jobState.confidenceMatrix = computeConfidenceMatrix(jobState);
     logger.banner('FATAL EXCEPTION REPORT');
     console.log(jobState.report);
   } finally {

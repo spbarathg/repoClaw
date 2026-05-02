@@ -9,6 +9,38 @@ export interface LiveIntelligence {
   reasoningStream: string[];
 }
 
+export interface ConfidenceMatrix {
+  manifestIntegrity: number;
+  dependencyStability: number;
+  buildSurface: number;
+  recoverability: number;
+  environmentRisk: number;
+}
+
+export interface CommandMutation {
+  cycle: number;
+  type: 'INSTALL' | 'BUILD';
+  before: string;
+  after: string;
+  asset: string;
+}
+
+export interface IntelligenceLedgerEntry {
+  jobId: string;
+  url: string;
+  category: string;
+  verdict: string;
+  score: number;
+  timestamp: string;
+}
+
+export interface ProtocolIdentity {
+  version: string;
+  sandboxImage: string;
+  fingerprint: string;
+  buildChainSignature: string;
+}
+
 export interface RepoClawState {
   status: 'IDLE' | 'CONNECTING' | 'RUNNING' | 'DONE' | 'ERROR' | 'OFFLINE';
   stage: 'IDLE' | 'FETCH' | 'STRUCTURE' | 'BUILD' | 'CLASSIFY' | 'FIX' | 'RETRY' | 'VERDICT';
@@ -23,10 +55,13 @@ export interface RepoClawState {
   generatedAssets: string[];
   interventionSuccession: string[];
   intelligence: LiveIntelligence;
-  // --- NEW: Computed forensic score from backend ---
   forensicScore: number;
   scoreGrade: string;
   retryCount: number;
+  confidenceMatrix?: ConfidenceMatrix;
+  commandMutations: CommandMutation[];
+  intelligenceLedger: IntelligenceLedgerEntry[];
+  protocolIdentity?: ProtocolIdentity;
 }
 
 export function useRepoClawSocket() {
@@ -52,7 +87,9 @@ export function useRepoClawSocket() {
     },
     forensicScore: 0,
     scoreGrade: '?',
-    retryCount: 0
+    retryCount: 0,
+    commandMutations: [],
+    intelligenceLedger: []
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -76,7 +113,6 @@ export function useRepoClawSocket() {
         if (match) next.targetUrl = match[1];
       }
       
-      // Stage inference from progress messages
       if (msg.includes('Cloning Target Repository')) next.stage = 'FETCH';
       if (msg.includes('Analyzing Architectural Structure')) next.stage = 'STRUCTURE';
       if (msg.includes('Entering Autonomous Build') || msg.includes('Executing Build Pass')) {
@@ -87,7 +123,6 @@ export function useRepoClawSocket() {
       if (msg.includes('Auto-Fix Applied:')) next.stage = 'FIX';
       if (msg.includes('Generating Final Intelligence Verdict')) next.stage = 'VERDICT';
 
-      // Intelligence parsing — build cycle tracking
       if (msg.includes('Executing Build Pass [Cycle')) {
         const match = msg.match(/\[Cycle (\d+\/\d+)\]/);
         if (match) {
@@ -96,7 +131,6 @@ export function useRepoClawSocket() {
         }
       }
 
-      // Root cause isolation — extract from backend message (NOT from guessing)
       if (msg.includes('Root cause isolated:')) {
          const match = msg.match(/Root cause isolated:\s*([A-Z_]+)\s*\(Confidence:\s*(\d+)%\)/);
          if (match) {
@@ -106,7 +140,6 @@ export function useRepoClawSocket() {
          }
       }
 
-      // Handle backend meta payload for exact state sync
       if (meta) {
          if (typeof meta.interventionsAttempted === 'number') next.interventionsAttempted = meta.interventionsAttempted;
          if (Array.isArray(meta.generatedAssets)) next.generatedAssets = meta.generatedAssets;
@@ -115,7 +148,6 @@ export function useRepoClawSocket() {
             intel.reasoningStream = meta.reasoningFeed.slice(-15);
             intelChanged = true;
          }
-         // Live stack from backend meta (authoritative source)
          if (meta.stack) {
             if (meta.stack.language) { intel.language = meta.stack.language; intelChanged = true; next.stack = meta.stack.language; }
             if (meta.stack.packageManager) { intel.packageManager = meta.stack.packageManager; intelChanged = true; }
@@ -129,7 +161,6 @@ export function useRepoClawSocket() {
   };
 
   const checkConnection = useCallback(() => {
-     // A ping just to see if the server is alive
      const ws = new WebSocket('ws://localhost:3000');
      ws.onopen = () => {
         ws.close();
@@ -143,13 +174,33 @@ export function useRepoClawSocket() {
   useEffect(() => {
      checkConnection();
      const interval = setInterval(checkConnection, 5000);
-     return () => clearInterval(interval);
+     
+     // Fetch initial history on mount
+     const initWs = new WebSocket('ws://localhost:3000');
+     initWs.onopen = () => {
+       initWs.send(JSON.stringify({ action: 'GET_HISTORY' }));
+     };
+     initWs.onmessage = (event) => {
+       try {
+         const payload = JSON.parse(event.data);
+         if (payload.status === 'HISTORY_SYNC') {
+           setState(prev => ({ ...prev, intelligenceLedger: payload.history }));
+           initWs.close();
+         }
+       } catch (e) {}
+     };
+     
+     return () => {
+       clearInterval(interval);
+       initWs.close();
+     };
   }, [checkConnection]);
 
   const analyze = useCallback((url: string) => {
     if (wsRef.current) wsRef.current.close();
     
-    setState({
+    setState((prev) => ({
+      ...prev,
       status: 'CONNECTING',
       stage: 'IDLE',
       jobId: null,
@@ -171,8 +222,11 @@ export function useRepoClawSocket() {
       },
       forensicScore: 0,
       scoreGrade: '?',
-      retryCount: 0
-    });
+      retryCount: 0,
+      commandMutations: [],
+      confidenceMatrix: undefined,
+      protocolIdentity: undefined
+    }));
 
     try {
       const ws = new WebSocket('ws://localhost:3000');
@@ -188,7 +242,9 @@ export function useRepoClawSocket() {
       ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.status === 'PROGRESS') {
+          if (payload.status === 'HISTORY_SYNC') {
+            setState((prev) => ({ ...prev, intelligenceLedger: payload.history }));
+          } else if (payload.status === 'PROGRESS') {
             appendLog(payload.message);
             parseLogForState(payload.message, payload.meta);
           } else if (payload.status === 'DONE') {
@@ -203,16 +259,18 @@ export function useRepoClawSocket() {
               generatedAssets: fs?.generatedAssets ?? prev.generatedAssets,
               interventionSuccession: fs?.interventionSuccession ?? prev.interventionSuccession,
               interventionsAttempted: fs?.interventionsAttempted ?? prev.interventionsAttempted,
-              // Use backend's final confidence (from last error), not stale PROGRESS value
               confidence: fs?.confidence != null ? Math.round(fs.confidence * 100) : prev.confidence,
-              // Computed forensic score from backend
               forensicScore: fs?.forensicScore ?? 0,
               scoreGrade: fs?.scoreGrade ?? 'F',
               retryCount: fs?.retryCount ?? 0,
+              confidenceMatrix: fs?.confidenceMatrix,
+              commandMutations: fs?.commandMutations || [],
+              protocolIdentity: fs?.protocolIdentity,
               intelligence: {
                 ...prev.intelligence,
                 language: fs?.stack?.language ?? prev.intelligence.language,
                 packageManager: fs?.stack?.packageManager ?? prev.intelligence.packageManager,
+                reasoningStream: fs?.reasoningFeed?.length ? fs.reasoningFeed.slice(-15) : prev.intelligence.reasoningStream,
               }
             }));
             appendLog(`[SYSTEM] Pipeline complete.`);

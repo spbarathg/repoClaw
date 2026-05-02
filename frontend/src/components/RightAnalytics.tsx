@@ -1,10 +1,22 @@
 import type { RepoClawState } from '../hooks/useRepoClawSocket';
-import { Layers, ShieldAlert, Code2, Package, Settings2, ShieldCheck, XCircle, AlertTriangle } from 'lucide-react';
+import { Layers, ShieldAlert, Code2, Package, Settings2, ShieldCheck, XCircle, AlertTriangle, Fingerprint, Activity } from 'lucide-react';
 import { motion } from 'framer-motion';
 import React, { memo } from 'react';
 
 export const RightAnalytics: React.FC<{ state: RepoClawState }> = memo(({ state }) => {
-  const { intelligence, targetUrl, errorCategory, confidence, verdict } = state;
+  const { intelligence, targetUrl, verdict, confidenceMatrix, protocolIdentity } = state;
+
+  const renderProgress = (label: string, value: number, colorClass: string) => (
+    <div className="mb-2">
+      <div className="flex justify-between text-[8px] font-mono tracking-widest text-white/50 mb-1 uppercase">
+        <span>{label}</span>
+        <span>{value}%</span>
+      </div>
+      <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+        <div className={`h-full ${colorClass} transition-all duration-1000 ease-out`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-4 h-full">
@@ -34,90 +46,49 @@ export const RightAnalytics: React.FC<{ state: RepoClawState }> = memo(({ state 
         </div>
       </div>
 
-      {/* Live Inference Box */}
+      {/* Forensic Confidence Matrix */}
       <div className="glass-panel p-4 relative overflow-hidden flex-1 flex flex-col min-h-0">
-        <div className="flex items-center gap-2 text-slate-400 text-[9px] font-mono mb-3 tracking-[0.2em] uppercase shrink-0">
-          <Settings2 size={12} className="text-white" />
-          Live_Inference_State
+        <div className="flex items-center gap-2 text-slate-400 text-[9px] font-mono mb-4 tracking-[0.2em] uppercase shrink-0">
+          <Activity size={12} className="text-claw-cyan" />
+          Forensic_Confidence_Matrix
         </div>
 
-        <div className="flex justify-around mb-4 shrink-0 px-2">
-           <div className="flex flex-col items-center gap-2">
-              <div className="relative w-14 h-14 flex items-center justify-center rounded-full border border-white/10 bg-black/40 shadow-inner">
-                 <div className="absolute inset-0 rounded-full border border-t-claw-cyan animate-spin-slow opacity-50" />
-                 <div className={`text-xs font-mono font-bold ${intelligence.currentCycle ? 'text-white' : 'text-slate-600'}`}>
-                    {intelligence.currentCycle?.replace('/', ' / ') || '--'}
-                 </div>
-              </div>
-              <div className="text-[8px] text-slate-500 font-mono tracking-widest uppercase text-center">RETRY CYCLE</div>
-           </div>
-           
-           <div className="flex flex-col items-center gap-2">
-               <div className="relative w-14 h-14 flex items-center justify-center rounded-full border border-white/10 bg-black/40 shadow-inner">
-                 <div className="absolute inset-0 rounded-full border border-b-claw-cyan animate-spin-reverse-slow opacity-50" />
-                 <div className={`text-xl font-mono font-bold ${state.interventionsAttempted > 0 ? 'text-claw-cyan text-glow-cyan' : 'text-slate-600'}`}>
-                    {state.interventionsAttempted}
-                 </div>
-              </div>
-              <div className="text-[8px] text-slate-500 font-mono tracking-widest uppercase text-center">INTERVENTIONS</div>
-           </div>
-           
-           <div className="flex flex-col items-center gap-2">
-              <div className="relative w-14 h-14 flex items-center justify-center rounded-full border border-white/10 bg-black/40 shadow-inner">
-                 <div className="absolute inset-0 rounded-full border border-r-claw-purple animate-spin-slow opacity-50" />
-                 <div className={`text-xl font-mono font-bold ${state.generatedAssets.length > 0 ? 'text-claw-purple text-glow-purple' : 'text-slate-600'}`}>
-                    {state.generatedAssets.length}
-                 </div>
-              </div>
-              <div className="text-[8px] text-slate-500 font-mono tracking-widest uppercase text-center">ASSETS</div>
-           </div>
-        </div>
-        
-        {/* Compact AI Diagnostic */}
-        <div className="bg-black/40 border border-white/5 p-3 rounded-lg mb-3 shrink-0 flex items-center justify-between">
-           <div>
-             <div className="flex items-center gap-2 text-slate-500 text-[8px] font-mono mb-1 tracking-widest uppercase">
-               <ShieldAlert size={10} className={errorCategory ? 'text-yellow-400' : 'text-slate-500'} />
-               AI_DIAGNOSTIC
-             </div>
-             <div className={`text-[10px] font-mono truncate w-24 ${errorCategory ? 'text-yellow-400 text-glow' : 'text-slate-600'}`}>
-               {errorCategory || 'AWAITING'}
-             </div>
-           </div>
-           
-           <div className="relative w-10 h-10 shrink-0">
-              <svg className="w-10 h-10 transform -rotate-90">
-                 <circle cx="20" cy="20" r="16" stroke="currentColor" strokeWidth="2.5" fill="transparent" className="text-white/5" />
-                 <circle cx="20" cy="20" r="16" stroke="currentColor" strokeWidth="2.5" fill="transparent" 
-                         strokeDasharray={2 * Math.PI * 16} 
-                         strokeDashoffset={2 * Math.PI * 16 * (1 - (confidence || 0) / 100)}
-                         className="text-yellow-400 transition-all duration-1000 ease-out" />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-yellow-400 font-bold">
-                {confidence || 0}%
-              </div>
-           </div>
-        </div>
+        {confidenceMatrix ? (
+          <div className="flex flex-col justify-center flex-1 space-y-3 relative z-10">
+            {renderProgress('Manifest Integrity', confidenceMatrix.manifestIntegrity, confidenceMatrix.manifestIntegrity >= 70 ? 'bg-claw-cyan' : 'bg-orange-400')}
+            {renderProgress('Dependency Stability', confidenceMatrix.dependencyStability, confidenceMatrix.dependencyStability >= 70 ? 'bg-claw-emerald' : 'bg-orange-400')}
+            {renderProgress('Build Surface', confidenceMatrix.buildSurface, confidenceMatrix.buildSurface >= 70 ? 'bg-claw-purple' : 'bg-orange-400')}
+            {renderProgress('Recoverability', confidenceMatrix.recoverability, confidenceMatrix.recoverability >= 70 ? 'bg-yellow-400' : 'bg-red-400')}
+            {renderProgress('Environment Risk', confidenceMatrix.environmentRisk, confidenceMatrix.environmentRisk <= 30 ? 'bg-claw-emerald' : 'bg-red-500')}
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center relative z-10">
+            <div className="text-[10px] font-mono text-slate-600 border border-dashed border-white/10 rounded-lg p-3 text-center w-full">
+              Awaiting multidimensional computation...
+            </div>
+          </div>
+        )}
+      </div>
 
-        {/* Generated Assets List */}
-        <div className="flex-1 min-h-0 flex flex-col">
-           <div className="text-[8px] text-slate-500 font-mono tracking-widest mb-2 shrink-0 flex items-center gap-2">
-             <span className="w-1.5 h-1.5 rounded-full bg-claw-cyan animate-pulse"></span>
-             GENERATED_RECOVERY_ASSETS
-           </div>
-           {state.generatedAssets.length > 0 ? (
-             <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar pr-1 flex-1">
-               {state.generatedAssets.map((asset, i) => (
-                  <div key={i} className="bg-claw-cyan/5 border border-claw-cyan/20 p-2 rounded border-l-2 border-l-claw-cyan text-[9px] font-mono text-slate-300">
-                     <span className="opacity-70 mr-2">📄</span><span className="line-clamp-2 leading-snug">{asset}</span>
-                  </div>
-               ))}
-             </div>
-           ) : (
-             <div className="text-[10px] font-mono text-slate-600 border border-dashed border-white/10 rounded-lg p-3 text-center flex-1 flex items-center justify-center">
-               Awaiting synthesis...
-             </div>
-           )}
+      {/* Execution Protocol Identity */}
+      <div className="glass-panel p-4 relative overflow-hidden shrink-0">
+        <div className="flex items-center gap-2 text-slate-400 text-[9px] font-mono mb-3 tracking-[0.2em] uppercase relative z-10">
+          <Fingerprint size={12} className="text-white/40" />
+          Execution_Protocol_Identity
+        </div>
+        <div className="space-y-2 relative z-10">
+          <div className="flex justify-between items-center text-[9px] font-mono">
+            <span className="text-white/40 uppercase tracking-widest">Protocol</span>
+            <span className="text-claw-cyan">{protocolIdentity?.version || 'PENDING'}</span>
+          </div>
+          <div className="flex justify-between items-center text-[9px] font-mono">
+            <span className="text-white/40 uppercase tracking-widest">Sandbox</span>
+            <span className="text-white/80">{protocolIdentity?.sandboxImage || 'PENDING'}</span>
+          </div>
+          <div className="flex justify-between items-center text-[9px] font-mono">
+            <span className="text-white/40 uppercase tracking-widest">Trace_ID</span>
+            <span className="text-white/60">{protocolIdentity?.fingerprint || 'AWAITING_FINGERPRINT'}</span>
+          </div>
         </div>
       </div>
 
@@ -131,7 +102,6 @@ export const RightAnalytics: React.FC<{ state: RepoClawState }> = memo(({ state 
         
         {verdict ? (
           (() => {
-            // Use COMPUTED grade from backend
             const grade = state.scoreGrade || 'F';
             const score = state.forensicScore;
             let color = 'text-claw-red bg-claw-red/10 text-glow-red';

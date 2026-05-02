@@ -32,3 +32,41 @@ export const readJobState = async (jobId: string): Promise<JobState | null> => {
     return null;
   }
 };
+
+import { IntelligenceLedgerEntry } from '../types';
+
+export const getGlobalHistory = async (): Promise<IntelligenceLedgerEntry[]> => {
+  try {
+    const memoryDir = path.resolve('./memory');
+    await fs.mkdir(memoryDir, { recursive: true });
+    const files = await fs.readdir(memoryDir);
+    const yamlFiles = files.filter(f => f.endsWith('.yaml'));
+    
+    const history: IntelligenceLedgerEntry[] = [];
+    
+    for (const file of yamlFiles) {
+      try {
+        const content = await fs.readFile(path.join(memoryDir, file), 'utf8');
+        const state = yaml.load(content) as JobState;
+        if (state && state.jobId) {
+          history.push({
+            jobId: state.jobId,
+            url: state.url,
+            category: state.errors && state.errors.length > 0 ? state.errors[state.errors.length - 1].category : 'CLEAN',
+            verdict: state.status,
+            score: state.forensicScore || 0,
+            timestamp: new Date(parseInt(state.jobId)).toISOString()
+          });
+        }
+      } catch (e) {
+        // Skip corrupted files
+      }
+    }
+    
+    // Sort by descending timestamp (newest first)
+    return history.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId)).slice(0, 50); // limit to last 50
+  } catch (err) {
+    logger.error('Failed to read global history', { error: err });
+    return [];
+  }
+};

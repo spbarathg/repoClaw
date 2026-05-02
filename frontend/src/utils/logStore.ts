@@ -27,8 +27,11 @@ class LogStore {
   }
 
   private notify() {
-    // Only pass the reference, let the component handle rendering optimization
-    // We pass a shallow copy to ensure React detects the change if it checks equality
+    if (this.listeners.size === 0) return;
+    // Cap log history to prevent memory bloat during long pipeline runs
+    if (this.logs.length > 200) {
+      this.logs = this.logs.slice(-150);
+    }
     const currentLogs = [...this.logs];
     this.listeners.forEach(l => l(currentLogs));
   }

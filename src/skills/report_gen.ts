@@ -38,13 +38,27 @@ export const reportGen = async (state: JobState): Promise<string> => {
   let report = `# ${headerEmoji} RepoClaw Analysis Verdict\n\n`;
   report += `${badge}\n\n`;
 
-  // --- FORENSIC SCORE CARD ---
-  report += `### 📊 Forensic Score\n`;
+  // --- PROTOCOL IDENTITY ---
+  if (state.protocolIdentity) {
+    report += `### 🔐 Execution Protocol Identity\n`;
+    report += `- **Version:** \`${state.protocolIdentity.version}\`\n`;
+    report += `- **Runtime Sandbox:** \`${state.protocolIdentity.sandboxImage}\`\n`;
+    report += `- **Trace Fingerprint:** \`${state.protocolIdentity.fingerprint}\`\n`;
+    report += `- **Build Chain Signature:** \`${state.protocolIdentity.buildChainSignature}\`\n`;
+    report += `\n---\n\n`;
+  }
+
+  // --- FORENSIC SCORE CARD & CONFIDENCE MATRIX ---
+  report += `### 📊 Forensic Intelligence Matrix\n`;
   report += `- **Score:** ${state.forensicScore >= 0 ? `${state.forensicScore}/100` : 'N/A (Infrastructure)'}\n`;
   report += `- **Grade:** ${state.scoreGrade}\n`;
-  report += `- **Retries Consumed:** ${state.retryCount}/${config.maxRetries}\n`;
-  report += `- **Interventions Deployed:** ${state.interventionsAttempted}\n`;
-  report += `- **Recovery Assets Generated:** ${state.generatedAssets.length}\n`;
+  if (state.confidenceMatrix) {
+    report += `- **Manifest Integrity:** ${state.confidenceMatrix.manifestIntegrity}%\n`;
+    report += `- **Dependency Stability:** ${state.confidenceMatrix.dependencyStability}%\n`;
+    report += `- **Build Surface:** ${state.confidenceMatrix.buildSurface}%\n`;
+    report += `- **Recoverability:** ${state.confidenceMatrix.recoverability}%\n`;
+    report += `- **Environment Risk:** ${state.confidenceMatrix.environmentRisk}%\n`;
+  }
   report += `\n---\n\n`;
 
   // --- REPOSITORY INTELLIGENCE ---
@@ -57,9 +71,21 @@ export const reportGen = async (state: JobState): Promise<string> => {
   }
   report += `\n---\n\n`;
 
+  // --- AUTONOMOUS INTERVENTION TRANSPARENCY ---
+  if (state.commandMutations && state.commandMutations.length > 0) {
+    report += `### 🧬 Autonomous Intervention Transparency\n\n`;
+    state.commandMutations.forEach(mut => {
+      report += `#### Cycle ${mut.cycle} - ${mut.type} Mutation\n`;
+      report += `- **Before:** \`${mut.before}\`\n`;
+      report += `- **After:** \`${mut.after}\`\n`;
+      report += `- **Asset Synthesized:** \`${mut.asset}\`\n\n`;
+    });
+    report += `---\n\n`;
+  }
+
   // --- CORRECTION CYCLE TABLE ---
   if (state.errors.length > 0) {
-    report += `### 🤖 Autonomous Correction Cycle\n\n`;
+    report += `### 🤖 Correction Cycle Log\n\n`;
     report += `| Cycle | Classified Error | Confidence | Severity | Retry Viable |\n`;
     report += `|-------|------------------|------------|----------|-------------|\n`;
     state.errors.forEach((err, i) => {
@@ -67,9 +93,8 @@ export const reportGen = async (state: JobState): Promise<string> => {
     });
     report += `\n`;
 
-    // Intervention succession log (actual patches applied)
     if (state.interventionSuccession.length > 0) {
-      report += `#### Intervention Log\n`;
+      report += `#### Action Log\n`;
       state.interventionSuccession.forEach(entry => {
         report += `- ${entry}\n`;
       });
@@ -141,7 +166,6 @@ export const reportGen = async (state: JobState): Promise<string> => {
     report += `Repository classified as static/documentation/meta architecture. No deterministic runtime execution plane was detected — the codebase contains no compilable source manifests, only documentation, configuration, or template assets.\n`;
 
   } else {
-    // NON_BUILDABLE, TERMINAL_UNRESOLVED, INFRASTRUCTURE_ERROR
     const lastError = state.errors.length > 0 ? state.errors[state.errors.length - 1] : null;
     const cat = lastError?.category || 'UNKNOWN';
     const failureReasoning: Record<string, string> = {

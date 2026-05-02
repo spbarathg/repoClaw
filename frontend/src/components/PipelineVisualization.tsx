@@ -1,15 +1,16 @@
 import type { RepoClawState } from '../hooks/useRepoClawSocket';
-import { Terminal, Download, FileSearch, Box, ShieldAlert, Wrench, RefreshCcw } from 'lucide-react';
+import { Terminal, Download, FileSearch, Box, ShieldAlert, Wrench, RefreshCcw, Award } from 'lucide-react';
 import { motion } from 'framer-motion';
 import React, { memo } from 'react';
 
 const STAGES = [
-  { id: 'FETCH', label: 'SOURCE AQUISITION', icon: Download },
+  { id: 'FETCH', label: 'SOURCE ACQUISITION', icon: Download },
   { id: 'STRUCTURE', label: 'ARCHITECTURAL SCAN', icon: FileSearch },
   { id: 'BUILD', label: 'AUTONOMOUS BUILD', icon: Box },
   { id: 'CLASSIFY', label: 'GEMINI DIAGNOSTICS', icon: ShieldAlert },
   { id: 'FIX', label: 'SYNTHESIZING PATCH', icon: Wrench },
-  { id: 'RETRY', label: 'VERIFICATION CYCLE', icon: RefreshCcw }
+  { id: 'RETRY', label: 'VERIFICATION CYCLE', icon: RefreshCcw },
+  { id: 'VERDICT', label: 'FINAL VERDICT', icon: Award }
 ];
 
 export const PipelineVisualization: React.FC<{ state: RepoClawState }> = memo(({ state }) => {
@@ -45,8 +46,8 @@ export const PipelineVisualization: React.FC<{ state: RepoClawState }> = memo(({
         
         <div className="flex flex-col justify-between h-full gap-2">
           {STAGES.map((s, i) => {
-            const isActive = stage === s.id || (stage === 'VERDICT' && i === STAGES.length - 1);
-            const isPast = currentIndex > i || stage === 'VERDICT';
+            const isActive = stage === s.id;
+            const isPast = currentIndex > i;
             const Icon = s.icon;
             
             let colorClass = 'border-white/10 bg-black/80 text-slate-700';
