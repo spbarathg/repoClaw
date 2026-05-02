@@ -24,15 +24,36 @@ export const startWebSocketServer = () => {
         
         ws.send(JSON.stringify({ status: 'ACK', message: `Job accepted for ${request.url}` }));
         
-        const onProgress = (msg: string) => {
+        const onProgress = (msg: string, meta?: any) => {
            if (ws.readyState === ws.OPEN) {
-              ws.send(JSON.stringify({ status: 'PROGRESS', message: msg }));
+              ws.send(JSON.stringify({ status: 'PROGRESS', message: msg, meta }));
            }
         };
 
-        await handleIncomingRequest(request, onProgress);
+        const result = await handleIncomingRequest(request, onProgress);
         
-        ws.send(JSON.stringify({ status: 'DONE', message: `Analysis complete for ${request.url}` }));
+        ws.send(JSON.stringify({ 
+           status: 'DONE', 
+           message: `Analysis complete for ${request.url}`,
+           report: result?.report,
+           verdict: result?.status,
+           finalState: {
+             verdict: result?.status,
+             report: result?.report,
+             errorCategory: result?.errors?.length ? result.errors[result.errors.length - 1].category : null,
+             errors: result?.errors || [],
+             generatedAssets: result?.generatedAssets || [],
+             interventionSuccession: result?.interventionSuccession || [],
+             interventionsAttempted: result?.interventionsAttempted || 0,
+             logs: result?.logs || [],
+             stack: result?.stack || null,
+             forensicScore: result?.forensicScore ?? 0,
+             scoreGrade: result?.scoreGrade ?? 'F',
+             patchMutationLog: result?.patchMutationLog || [],
+             retryCount: result?.retryCount ?? 0,
+             confidence: result?.errors?.length ? result.errors[result.errors.length - 1].confidence : null
+           }
+        }));
       } catch (err: any) {
         logger.error('Failed to process WS message', { error: err.message });
         ws.send(JSON.stringify({ status: 'ERROR', error: err.message }));

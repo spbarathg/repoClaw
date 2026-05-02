@@ -15,7 +15,7 @@ export const executeShell = (command: string, cwd: string, timeoutMs: number = 6
   return new Promise((resolve) => {
     logger.debug(`Executing shell command: ${command} in ${cwd} with timeout ${timeoutMs}ms`);
     
-    const child = exec(command, { cwd, timeout: timeoutMs }, (error: any, stdout: string, stderr: string) => {
+    const child = exec(command, { cwd, timeout: timeoutMs, maxBuffer: 15 * 1024 * 1024 }, (error: any, stdout: string, stderr: string) => {
       if (error) {
         logger.warn(`Command failed or timed out: ${command}`, { error: error.message });
         resolve({
