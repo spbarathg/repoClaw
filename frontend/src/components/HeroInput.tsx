@@ -46,7 +46,7 @@ export const HeroInput: React.FC<{ onAnalyze: (url: string) => void, state: Repo
         {isRunning ? (
            <>
              <Activity size={18} className="animate-pulse" />
-             ENGAGED
+             RUNNING
            </>
         ) : (
            <>

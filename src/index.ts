@@ -11,7 +11,7 @@ const bootstrap = async () => {
   const args = process.argv.slice(2);
   if (args.length > 0) {
     const url = args[0];
-    await piEngineRun({ url, source: 'telegram', chatId: 'CLI' });
+    await piEngineRun({ url, source: 'cli', chatId: 'CLI' });
     process.exit(0);
   } else {
     logger.banner('REPOCLAW GATEWAY ONLINE');

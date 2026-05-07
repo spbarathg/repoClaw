@@ -27,7 +27,7 @@ export const logger = {
   debug: (msg: string, meta?: any) => console.debug(format('debug', colors.debug, msg, meta)),
   success: (msg: string, meta?: any) => console.log(format('success', colors.success, msg, meta)),
   
-  // Theatrical Banners
+  // Output Banners
   banner: (title: string) => {
     console.log(`\n${colors.magenta}================================================================${colors.reset}`);
     console.log(`${colors.magenta}  ${colors.bold}${title.toUpperCase()}${colors.reset}`);

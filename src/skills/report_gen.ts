@@ -1,194 +1,131 @@
 /**
  * @file src/skills/report_gen.ts
- * Role: Assembles the final Markdown report for delivery.
- * Uses computed forensic score from JobState — no hardcoded buckets.
+ * Role: Generates structured markdown report from pipeline provenance data.
+ * No fabricated metrics. Reports only what was measured.
  */
 import { JobState } from '../types';
 import { logger } from '../utils/logger';
-import { config } from '../config';
 
 export const reportGen = async (state: JobState): Promise<string> => {
-  logger.info('Skill: report_gen -> Generating polished markdown report');
+  logger.info('Skill: report_gen -> Generating provenance report');
 
-  // --- VERDICT BADGE (uses computed score) ---
+  const verdict = state.status;
+  const provenance = state.provenance;
+
+  // ━━━ VERDICT HEADER ━━━
   let headerEmoji = '❌';
-  let badge = `![Non-Buildable](https://img.shields.io/badge/Verdict-Non--Buildable-red?style=for-the-badge)`;
+  let verdictLabel = 'BUILD_FAILED';
 
-  if (state.status === 'BUILDABLE') {
-    headerEmoji = '✅';
-    badge = `![Buildable](https://img.shields.io/badge/Verdict-Buildable-brightgreen?style=for-the-badge)`;
-  } else if (state.status === 'FIXABLE') {
-    headerEmoji = '🔧';
-    badge = `![Fixable](https://img.shields.io/badge/Verdict-Fixable-yellow?style=for-the-badge)`;
-  } else if (state.status === 'UNSUPPORTED_ARCHITECTURE') {
-    headerEmoji = '🤷';
-    badge = `![Unsupported](https://img.shields.io/badge/Verdict-Unsupported-lightgrey?style=for-the-badge)`;
-  } else if (state.status === 'INFRASTRUCTURE_ERROR') {
-    headerEmoji = '🏗️';
-    badge = `![Infrastructure](https://img.shields.io/badge/Verdict-Infrastructure--Error-orange?style=for-the-badge)`;
-  } else if (state.status === 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY') {
-    headerEmoji = '🛑';
-    badge = `![Terminal](https://img.shields.io/badge/Verdict-Terminal--Unresolved-darkred?style=for-the-badge)`;
-  }
+  if (verdict === 'BUILD_SUCCEEDED') { headerEmoji = '✅'; verdictLabel = 'BUILD_SUCCEEDED'; }
+  else if (verdict === 'REPAIRED') { headerEmoji = '🔧'; verdictLabel = 'REPAIRED'; }
+  else if (verdict === 'UNSUPPORTED') { headerEmoji = '⬜'; verdictLabel = 'UNSUPPORTED'; }
+  else if (verdict === 'INFRA_FAILED') { headerEmoji = '🏗️'; verdictLabel = 'INFRA_FAILED'; }
+  else if (verdict === 'REPAIR_EXHAUSTED') { headerEmoji = '🛑'; verdictLabel = 'REPAIR_EXHAUSTED'; }
+  else if (verdict === 'SANDBOX_VIOLATION') { headerEmoji = '🔒'; verdictLabel = 'SANDBOX_VIOLATION'; }
+  else if (verdict === 'NON_DETERMINISTIC_FAILURE') { headerEmoji = '⚠️'; verdictLabel = 'NON_DETERMINISTIC_FAILURE'; }
+  else { verdictLabel = String(verdict); }
 
   const stackStr = state.stack
     ? `**${state.stack.language}** (${state.stack.packageManager})`
     : '*Unknown*';
 
-  let report = `# ${headerEmoji} RepoClaw Analysis Verdict\n\n`;
-  report += `${badge}\n\n`;
+  let report = `# ${headerEmoji} RepoClaw Build Recovery Report\n\n`;
+  report += `**Verdict:** \`${verdictLabel}\`\n\n`;
 
-  // --- PROTOCOL IDENTITY ---
-  if (state.protocolIdentity) {
-    report += `### 🔐 Execution Protocol Identity\n`;
-    report += `- **Version:** \`${state.protocolIdentity.version}\`\n`;
-    report += `- **Runtime Sandbox:** \`${state.protocolIdentity.sandboxImage}\`\n`;
-    report += `- **Trace Fingerprint:** \`${state.protocolIdentity.fingerprint}\`\n`;
-    report += `- **Build Chain Signature:** \`${state.protocolIdentity.buildChainSignature}\`\n`;
+  // ━━━ PIPELINE METADATA ━━━
+  if (provenance) {
+    report += `### Pipeline Execution\n`;
+    report += `- **Pipeline Version:** \`${provenance.pipelineVersion}\`\n`;
+    report += `- **Job ID:** \`${provenance.jobId}\`\n`;
+    report += `- **Duration:** ${provenance.totalDurationMs}ms\n`;
+    report += `- **Sandbox Image:** \`${provenance.sandboxImage}\`\n`;
+    report += `- **Container Limits:** \`${provenance.dockerFlags.filter(f => f.startsWith('--memory') || f.startsWith('--cpus') || f.startsWith('--pids')).join(', ') || 'default'}\`\n`;
+    report += `- **Total Cycles:** ${provenance.totalCycles}\n`;
+    report += `- **Mutations Applied:** ${provenance.totalMutationsApplied}\n`;
     report += `\n---\n\n`;
   }
 
-  // --- FORENSIC SCORE CARD & CONFIDENCE MATRIX ---
-  report += `### 📊 Forensic Intelligence Matrix\n`;
-  report += `- **Score:** ${state.forensicScore >= 0 ? `${state.forensicScore}/100` : 'N/A (Infrastructure)'}\n`;
-  report += `- **Grade:** ${state.scoreGrade}\n`;
-  if (state.confidenceMatrix) {
-    report += `- **Manifest Integrity:** ${state.confidenceMatrix.manifestIntegrity}%\n`;
-    report += `- **Dependency Stability:** ${state.confidenceMatrix.dependencyStability}%\n`;
-    report += `- **Build Surface:** ${state.confidenceMatrix.buildSurface}%\n`;
-    report += `- **Recoverability:** ${state.confidenceMatrix.recoverability}%\n`;
-    report += `- **Environment Risk:** ${state.confidenceMatrix.environmentRisk}%\n`;
-  }
-  report += `\n---\n\n`;
-
-  // --- REPOSITORY INTELLIGENCE ---
-  report += `### 📡 Repository Intelligence\n`;
-  report += `- **Target Origin:** [${state.url}](${state.url})\n`;
-  report += `- **Detected Architecture:** ${stackStr}\n`;
+  // ━━━ DETECTED STACK ━━━
+  report += `### Detected Build System\n`;
+  report += `- **Target:** [${state.url}](${state.url})\n`;
+  report += `- **Stack:** ${stackStr}\n`;
   if (state.stack) {
-    report += `- **Inferred Install:** \`${state.stack.installCommand}\`\n`;
-    report += `- **Inferred Build:** \`${state.stack.buildCommand}\`\n`;
+    report += `- **Lockfile Present:** ${state.stack.lockfilePresent ? 'Yes' : 'No'}\n`;
+    report += `- **Build Script Present:** ${state.stack.buildScriptPresent !== false ? 'Yes' : 'No'}\n`;
+    report += `- **Install Command:** \`${state.stack.installCommand}\`\n`;
+    report += `- **Build Command:** \`${state.stack.buildCommand}\`\n`;
   }
   report += `\n---\n\n`;
 
-  // --- AUTONOMOUS INTERVENTION TRANSPARENCY ---
+  // ━━━ COMMAND MUTATION DIFFS ━━━
   if (state.commandMutations && state.commandMutations.length > 0) {
-    report += `### 🧬 Autonomous Intervention Transparency\n\n`;
+    report += `### Command Mutations\n\n`;
     state.commandMutations.forEach(mut => {
-      report += `#### Cycle ${mut.cycle} - ${mut.type} Mutation\n`;
-      report += `- **Before:** \`${mut.before}\`\n`;
-      report += `- **After:** \`${mut.after}\`\n`;
-      report += `- **Asset Synthesized:** \`${mut.asset}\`\n\n`;
+      report += `**Cycle ${mut.cycle} — ${mut.type} (surface: \`${mut.surface}\`)**\n`;
+      report += `\`\`\`diff\n- ${mut.before || '(empty)'}\n+ ${mut.after}\n\`\`\`\n\n`;
     });
     report += `---\n\n`;
   }
 
-  // --- CORRECTION CYCLE TABLE ---
-  if (state.errors.length > 0) {
-    report += `### 🤖 Correction Cycle Log\n\n`;
-    report += `| Cycle | Classified Error | Confidence | Severity | Retry Viable |\n`;
-    report += `|-------|------------------|------------|----------|-------------|\n`;
-    state.errors.forEach((err, i) => {
-      report += `| **${i + 1}** | \`${err.category}\` | ${Math.round(err.confidence * 100)}% | ${err.severity} | ${err.retryRecommended ? '✅' : '❌'} |\n`;
+  // ━━━ REPAIR TRACE TABLE ━━━
+  if (state.repairTrace.length > 0) {
+    report += `### Repair Trace\n\n`;
+    report += `| Cycle | Category | Match Strength | Source | Strategy | Safety | Result |\n`;
+    report += `|-------|----------|---------------|--------|----------|--------|--------|\n`;
+    state.repairTrace.forEach(trace => {
+      const strength = `${Math.round(trace.matchStrength * 100)}%`;
+      const result = trace.rejectionReason ? `Rejected: ${trace.rejectionReason}` : (trace.rolledBack ? 'Rolled back' : 'Applied');
+      report += `| ${trace.cycle} | \`${trace.failureCategory}\` | ${strength} | ${trace.classificationSource} | ${trace.repairStrategy || 'none'} | ${trace.repairSafety || 'N/A'} | ${result} |\n`;
     });
-    report += `\n`;
-
-    if (state.interventionSuccession.length > 0) {
-      report += `#### Action Log\n`;
-      state.interventionSuccession.forEach(entry => {
-        report += `- ${entry}\n`;
-      });
-    }
     report += `\n---\n\n`;
   }
 
-  // --- BUILD EXECUTION SUMMARY ---
+  // ━━━ BUILD OUTPUT ━━━
   const lastLog = state.logs.length > 0 ? state.logs[state.logs.length - 1] : null;
-
   if (lastLog) {
-    report += `### 🛠 Final Build Execution Summary\n`;
-    report += `**Container Exit Code:** \`${lastLog.exitCode}\`\n\n`;
+    report += `### Final Build Output\n`;
+    report += `**Exit Code:** \`${lastLog.exitCode}\`\n\n`;
     if (lastLog.stderr && lastLog.stderr.trim().length > 0) {
-      report += `#### \`STDERR\`\n\`\`\`bash\n${lastLog.stderr.substring(0, 1000)}\n\`\`\`\n\n`;
+      report += `#### STDERR\n\`\`\`\n${lastLog.stderr.substring(0, 1000)}\n\`\`\`\n\n`;
     }
     if (lastLog.stdout && lastLog.stdout.trim().length > 0) {
-      report += `#### \`STDOUT\`\n\`\`\`bash\n${lastLog.stdout.substring(0, 500)}...\n\`\`\`\n\n`;
+      report += `#### STDOUT\n\`\`\`\n${lastLog.stdout.substring(0, 500)}\n\`\`\`\n\n`;
     }
+    report += `---\n\n`;
   }
 
-  // --- MACHINE RECOMMENDATION (category-specific, never templated) ---
-  report += `### 🧠 Final AI Reasoning\n`;
-  report += `> `;
+  // ━━━ SUMMARY ━━━
+  report += `### Summary\n> `;
 
-  if (state.status === 'BUILDABLE') {
-    const log = state.logs.length > 0 ? state.logs[state.logs.length - 1] : null;
-    const stackName = state.stack ? `${state.stack.language} (${state.stack.packageManager})` : 'detected';
-    const buildCmd = state.stack?.buildCommand || 'build';
-    let evidence = '';
-    if (log && log.stdout) {
-      if (log.stdout.includes('built in')) {
-        const m = log.stdout.match(/(built in [\d.]+s)/);
-        if (m) evidence += ` Production bundle ${m[1]}.`;
-      }
-      if (log.stdout.includes('modules transformed')) {
-        const m = log.stdout.match(/(\d+) modules? transformed/);
-        if (m) evidence += ` ${m[1]} modules compiled.`;
-      }
-      if (log.stdout.includes('added') && log.stdout.includes('packages')) {
-        const m = log.stdout.match(/added (\d+) packages/);
-        if (m) evidence += ` ${m[1]} packages resolved.`;
-      }
-      if (log.stdout.includes('compileall')) evidence += ' Python bytecode compilation verified.';
-      if (log.stdout.includes('Successfully installed')) evidence += ' All Python dependencies installed.';
-      if (log.stdout.includes('BUILD SUCCESS')) evidence += ' Maven build lifecycle completed successfully.';
+  if (verdict === 'BUILD_SUCCEEDED') {
+    report += `Repository built successfully with zero failures. `;
+    if (lastLog?.stdout) {
+      if (lastLog.stdout.includes('built in')) { const m = lastLog.stdout.match(/(built in [\d.]+s)/); if (m) report += `Bundle ${m[1]}. `; }
+      if (lastLog.stdout.includes('added') && lastLog.stdout.includes('packages')) { const m = lastLog.stdout.match(/added (\d+) packages/); if (m) report += `${m[1]} packages resolved. `; }
     }
-    if (!evidence) evidence = ` \`${buildCmd}\` completed with exit code 0.`;
-    report += `The ${stackName} repository compiled successfully with zero anomalies detected during execution.${evidence} Forensic score: ${state.forensicScore}/100.\n`;
+    report += `\n`;
 
-  } else if (state.status === 'FIXABLE') {
-    const lastError = state.errors.length > 0 ? state.errors[state.errors.length - 1] : null;
-    const cat = lastError?.category || 'UNKNOWN';
-    const fixableReasoning: Record<string, string> = {
-      'BUILD_SCRIPT_MISSING': `The repository lacked a deterministic build orchestration surface — no \`build\` script was defined in the project manifest. The agent autonomously synthesized a placeholder build entry point using the detected package manager (\`${state.stack?.packageManager}\`) and re-executed the compilation pipeline, achieving successful compilation after ${state.retryCount} retry cycle(s).`,
-      'DEPENDENCY_CONFLICT': `The dependency graph exhibited fractured peer resolution — conflicting version constraints between transitive dependencies prevented clean installation. The agent injected legacy peer resolution overrides for ${state.stack?.packageManager}, bypassing strict semver enforcement to force a viable dependency tree. Resolution achieved after ${state.retryCount} intervention(s).`,
-      'TYPESCRIPT_FAILURE': `TypeScript strict mode compilation surfaced ${state.errors.filter(e => e.category === 'TYPESCRIPT_FAILURE').length} type-system violation(s) across the codebase. The agent relaxed compiler strictness by injecting --skipLibCheck, allowing the build to proceed past third-party type definition mismatches. Final classifier confidence: ${lastError ? Math.round(lastError.confidence * 100) : 0}%.`,
-      'TYPESCRIPT_CONFIG_FAILURE': `The TypeScript configuration substrate was missing or malformed, blocking the compilation pipeline entirely. The agent synthesized a minimal tsconfig.json with relaxed compilation parameters (ES2020 target, skipLibCheck enabled), restoring the compilation pipeline after ${state.retryCount} cycle(s).`,
-      'MISSING_DEPENDENCY': `A critical dependency (\`${lastError?.missingPackageName || 'unidentified'}\`) was absent from the execution environment. The agent identified the missing package via stderr analysis (confidence: ${lastError ? Math.round(lastError.confidence * 100) : 0}%) and injected it into the install sequence, restoring the dependency graph.`,
-      'VITE_CONFIG_FAILURE': `The Vite bundler configuration contained unresolvable references — likely missing plugins or stale optimization cache. The agent injected --force to bypass cached dependency analysis, allowing a clean rebuild. ${state.interventionsAttempted} total intervention(s) were deployed.`,
-      'RUNTIME_VERSION_MISMATCH': `The project enforced strict runtime version constraints (engines field in package.json) incompatible with the sandbox environment (Node 20-alpine). The agent stripped the engines restriction from the manifest, normalizing the runtime surface for containerized execution.`,
-      'MISSING_ENV': `The application required environment configuration variables that were absent from the container sandbox. The agent synthesized a placeholder .env matrix with secure sandbox defaults (PORT, DATABASE_URL, API_KEY), unblocking the initialization pipeline.`,
-      'NETWORK_FETCH_FAILURE': `Package registry resolution failed due to network connectivity issues within the container sandbox. The agent switched to offline-tolerant installation with retry semantics on ${state.stack?.packageManager}, successfully recovering the dependency fetch pipeline after ${state.retryCount} cycle(s).`,
-      'PYTHON_NATIVE_TOOLCHAIN_FAILURE': `A Python package required native C/Fortran compilation from source but the initial container toolchain was insufficient. The agent injected binary-only wheel preference flags (--only-binary :all:) to bypass source compilation, successfully resolving the dependency chain.`,
-    };
-    report += (fixableReasoning[cat] || `The RepoClaw engine autonomously intercepted ${state.errors.length} anomaly(s), classified as ${cat} (confidence: ${lastError ? Math.round(lastError.confidence * 100) : 0}%), and deployed ${state.interventionsAttempted} intervention(s) to achieve successful compilation after ${state.retryCount} retry cycle(s).`) + '\n';
+  } else if (verdict === 'REPAIRED') {
+    const lastError = state.errors[state.errors.length - 1];
+    const lastTrace = state.repairTrace[state.repairTrace.length - 1];
+    report += `Build initially failed with ${lastError?.category || 'unknown'} (match strength: ${lastError ? Math.round(lastError.matchStrength * 100) : 0}%). `;
+    report += `Applied repair strategy \`${lastTrace?.repairStrategy || 'unknown'}\` (safety: ${lastTrace?.repairSafety || 'unknown'}). `;
+    report += `Build succeeded after ${state.retryCount} retry cycle(s).\n`;
 
-  } else if (state.status === 'UNSUPPORTED_ARCHITECTURE') {
-    report += `Repository classified as static/documentation/meta architecture. No deterministic runtime execution plane was detected — the codebase contains no compilable source manifests, only documentation, configuration, or template assets.\n`;
+  } else if (verdict === 'UNSUPPORTED') {
+    report += `No executable build surface detected. Repository contains documentation, configuration, or static assets only.\n`;
+
+  } else if (verdict === 'REPAIR_EXHAUSTED') {
+    const lastError = state.errors[state.errors.length - 1];
+    report += `Repair loop exhausted after ${state.retryCount} cycle(s). Last failure: ${lastError?.category || 'unknown'} (match strength: ${lastError ? Math.round(lastError.matchStrength * 100) : 0}%). `;
+    report += `No further material mutations available within policy boundaries.\n`;
+
+  } else if (verdict === 'INFRA_FAILED') {
+    report += `Build failed due to infrastructure issues external to the codebase. Docker daemon, network, or host environment requires manual remediation.\n`;
 
   } else {
     const lastError = state.errors.length > 0 ? state.errors[state.errors.length - 1] : null;
-    const cat = lastError?.category || 'UNKNOWN';
-    const failureReasoning: Record<string, string> = {
-      'INFRASTRUCTURE_FAILURE': `The build failed due to an infrastructure anomaly external to the codebase — Docker daemon connectivity, disk space exhaustion, or container orchestration failure prevented execution. The repository code was never evaluated. Host-level infrastructure remediation is required before re-analysis.`,
-      'PYTHON_NATIVE_TOOLCHAIN_FAILURE': `The Python dependency graph requires native C/Fortran compilation (gcc, gfortran, meson) that exhausted the container's build toolchain even after aggressive provisioning (gcc, g++, musl-dev, gfortran, openblas-dev, lapack-dev). Packages requiring compiled extensions could not be satisfied. Pre-built binary wheels or a full-fat container image are required.`,
-      'JAVA_COMPILE_FAILURE': `The Java/Maven/Gradle compilation pipeline failed due to missing symbols, incompatible JDK version, or unresolvable plugin dependencies. ${state.retryCount} retry cycle(s) were attempted. The JVM compilation surface requires manual inspection of pom.xml or build.gradle dependency declarations.`,
-      'PHP_PACKAGE_FAILURE': `Composer dependency resolution or PHP autoload generation failed. The package graph contains unresolvable version constraints or requires PHP extensions not available in the composer:2 container environment. ${state.interventionsAttempted} intervention(s) were attempted without resolution.`,
-      'SYNTAX_FAILURE': `The source code contains fatal syntax errors preventing AST parsing (${lastError ? Math.round(lastError.confidence * 100) : 0}% confidence). The compilation pipeline cannot proceed until malformed source files are manually corrected. This is a codebase-level defect, not an environmental issue.`,
-      'OUT_OF_MEMORY': `The build process was terminated due to memory pressure — the container's memory allocation was insufficient for the compilation workload. Large monorepos, heavy dependency trees, or memory-intensive bundlers may require increased container resource limits (currently using default Docker limits).`,
-      'PERMISSION_FAILURE': `File or directory permission restrictions prevented the build process from reading or writing required resources. This is typically caused by restrictive file ownership in the cloned repository or container filesystem constraints.`,
-      'NETWORK_FETCH_FAILURE': `Package registry resolution failed persistently despite retry/offline intervention. ${state.retryCount} retry cycle(s) with network resilience flags could not recover the dependency fetch pipeline. The registry may be unreachable or the packages may require authentication.`,
-      'DEPENDENCY_CONFLICT': `The dependency graph contains irreconcilable version conflicts that could not be resolved even with legacy peer dependency overrides on ${state.stack?.packageManager}. ${state.retryCount} intervention cycle(s) were exhausted. Manual dependency pinning or lockfile regeneration is required.`,
-      'MISSING_DEPENDENCY': `A critical package dependency could not be autonomously resolved after ${state.retryCount} retry cycle(s). The dependency is either unavailable in the target registry, requires authentication, or has been deprecated/removed. Last identified missing package: \`${lastError?.missingPackageName || 'unidentified'}\`.`,
-      'BUNDLER_FAILURE': `The module bundler (Vite/Rollup/Webpack/esbuild) failed to compile assets. The bundler configuration contains errors that cannot be autonomously patched — likely missing loader plugins, incompatible source transformations, or circular dependencies.`,
-      'BUILD_FAILURE': `The build script executed but produced fatal compilation errors (exit code non-zero). ${state.retryCount} retry cycle(s) with ${state.interventionsAttempted} intervention(s) could not resolve the underlying compilation defect. Manual source code inspection is required.`,
-      'MISSING_FILE': `A required file or directory referenced by the build configuration is absent from the repository. The missing path could not be autonomously synthesized. Build manifest inspection is required.`,
-      'UNKNOWN': `The build failed due to an unclassifiable anomaly (confidence: ${lastError ? Math.round(lastError.confidence * 100) : 0}%). The error signature did not match any of the ${21} known failure patterns in the autonomous classification engine. Manual forensic inspection of the stderr output is recommended.`,
-    };
-    if (state.status === 'TERMINAL_UNRESOLVED_NO_NEW_STRATEGY') {
-      report += `The autonomous engine exhausted all viable remediation strategies for ${cat} after ${state.retryCount} cycle(s). ${failureReasoning[cat] || 'The failure signature could not be deterministically patched.'} The retry loop was terminated because no material command or configuration mutation was available — preventing synthetic repetition.\n`;
-    } else {
-      report += (failureReasoning[cat] || `The repository build failed after ${state.retryCount} autonomous retry cycle(s). The terminal anomaly (${cat}) could not be resolved through deterministic intervention. Forensic score: ${state.forensicScore}/100.`) + '\n';
-    }
+    report += `Build failed after ${state.retryCount} cycle(s). Terminal failure: ${lastError?.category || 'unknown'}. ${state.interventionsAttempted} repair attempt(s) made.\n`;
   }
 
   return report;

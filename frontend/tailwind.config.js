@@ -24,6 +24,7 @@ export default {
       animation: {
         'pulse-glow': 'pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'beam': 'beam 2s linear infinite',
+        'marquee': 'marquee 30s linear infinite',
       },
       keyframes: {
         pulseGlow: {
@@ -33,8 +34,12 @@ export default {
         beam: {
           '0%': { transform: 'translateY(-100%)' },
           '100%': { transform: 'translateY(100%)' },
-        }
-      }
+        },
+        marquee: {
+          '0%': { transform: 'translateX(0%)' },
+          '100%': { transform: 'translateX(-50%)' },
+        },
+      },
     },
   },
   plugins: [],

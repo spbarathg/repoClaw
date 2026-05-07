@@ -99,8 +99,8 @@ export const structureAnalyze = async (state: JobState): Promise<void> => {
     // Selection or Abort
     if (!bestCandidate || highestScore < 20 || isDocumentationHeavy) {
       state.stack = { language: 'Unknown', packageManager: 'unknown' };
-      state.status = 'UNSUPPORTED_ARCHITECTURE';
-      logger.warn(`Skill: structure_analyze -> No credible executable workspace found or repository is static/meta. Aborting.`);
+      state.status = 'UNSUPPORTED';
+      logger.warn(`Skill: structure_analyze -> No executable build surface found. Aborting.`);
       return;
     }
 
@@ -113,6 +113,9 @@ export const structureAnalyze = async (state: JobState): Promise<void> => {
       const packageManager = files.includes('yarn.lock') ? 'yarn' : 
                              (files.includes('pnpm-lock.yaml') || files.includes('pnpm-workspace.yaml')) ? 'pnpm' : 'npm';
       
+      // Lockfile detection
+      const lockfilePresent = files.includes('package-lock.json') || files.includes('yarn.lock') || files.includes('pnpm-lock.yaml');
+      
       // Monorepo workspace detection
       const hasTurbo = files.includes('turbo.json');
       const hasPnpmWorkspace = files.includes('pnpm-workspace.yaml');
@@ -121,23 +124,26 @@ export const structureAnalyze = async (state: JobState): Promise<void> => {
       const isMonorepo = hasTurbo || hasPnpmWorkspace || hasNx || hasLerna;
 
       let buildCommand = `${packageManager} run build`;
+      let buildScriptPresent = true;
       if (isMonorepo) {
         if (hasTurbo) buildCommand = 'npx turbo run build';
         else if (hasNx) buildCommand = 'npx nx run-many -t build';
         else if (hasLerna) buildCommand = 'npx lerna run build';
         else if (hasPnpmWorkspace) buildCommand = 'pnpm -r run build';
-        logger.info(`Skill: structure_analyze -> Monorepo detected. Orchestrator: ${hasTurbo ? 'Turborepo' : hasNx ? 'Nx' : hasLerna ? 'Lerna' : 'pnpm workspace'}`);
+        logger.info(`Skill: structure_analyze -> Monorepo detected: ${hasTurbo ? 'Turborepo' : hasNx ? 'Nx' : hasLerna ? 'Lerna' : 'pnpm workspace'}`);
       } else if (type === 'package.json') {
         try {
           const pkgData = await fs.readFile(bestCandidate.path, 'utf8');
           const pkg = JSON.parse(pkgData);
-          if (!pkg.scripts || !pkg.scripts.build) buildCommand = ''; 
+          if (!pkg.scripts || !pkg.scripts.build) { buildCommand = ''; buildScriptPresent = false; }
         } catch (e) {}
       }
-      state.stack = { language: 'Node.js', packageManager, installCommand: `${packageManager} install`, buildCommand };
+      state.stack = { language: 'Node.js', packageManager, installCommand: `${packageManager} install`, buildCommand, lockfilePresent, buildScriptPresent };
     } 
     else if (['requirements.txt', 'pyproject.toml', 'setup.py'].includes(type)) {
-      state.stack = { language: 'Python', packageManager: type === 'pyproject.toml' ? 'poetry' : 'pip', installCommand: type === 'requirements.txt' ? 'pip install -r requirements.txt' : 'pip install .', buildCommand: 'python -m compileall .' };
+      const pyFiles = await fs.readdir(dir);
+      const pyLockfile = pyFiles.includes('Pipfile.lock') || pyFiles.includes('poetry.lock') || pyFiles.includes('requirements.txt');
+      state.stack = { language: 'Python', packageManager: type === 'pyproject.toml' ? 'poetry' : 'pip', installCommand: type === 'requirements.txt' ? 'pip install -r requirements.txt' : 'pip install .', buildCommand: 'python -m compileall .', lockfilePresent: pyLockfile, buildScriptPresent: true };
     }
     else if (type === 'go.mod') { state.stack = { language: 'Go', packageManager: 'go', installCommand: 'go mod download', buildCommand: 'go build ./...' }; }
     else if (type === 'Cargo.toml') { state.stack = { language: 'Rust', packageManager: 'cargo', installCommand: '', buildCommand: 'cargo build' }; }

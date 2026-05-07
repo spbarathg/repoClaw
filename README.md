@@ -1,70 +1,82 @@
-<div align="center">
-  <h1>🦀 RepoClaw</h1>
-  <p><strong>The Autonomous AI Engine that Fixes Broken Repositories Before You Even Clone Them.</strong></p>
-</div>
+# RepoClaw
 
-## 🚀 The Pitch
-**RepoClaw** is an autonomous repository evaluation and repair agent built for modern engineering teams. Instead of manually cloning a repo, installing dependencies, dealing with cryptic build failures, and hunting for patches on StackOverflow, RepoClaw automates the entire debugging lifecycle in a secure, ephemeral sandbox. It fetches code, identifies its architecture, attempts a live build, and when (not if) it fails, it uses advanced AI (Gemini 2.5 Flash) to classify the failure, dynamically injects a deterministic patch, and retries. You get a fully sanitized, working repository or a crystal-clear diagnostic report—zero manual effort required.
+**Deterministic Build Recovery Engine & CI Console.**
 
-## ✨ Key Features
-- **Zero-Touch Evaluation:** Submit a GitHub URL and let the agent handle cloning, parsing, and execution.
-- **Autonomous Repair Loop:** `Try -> Classify -> Fix -> Retry`. The agent autonomously patches missing dependencies, syntax issues, and environment configs.
-- **Secure Ephemeral Execution:** Every repository is jailed inside a throwaway Docker sandbox, ensuring your host machine remains pristine.
-- **Deterministic AI Heuristics:** Combines the reasoning power of LLMs with deterministic, hard-coded fallback strategies for guaranteed execution stability.
-- **Instant Verdicts:** Returns actionable diagnostic artifacts classifying the repository as `Buildable`, `Fixable`, or `Non-Buildable`.
+RepoClaw is a strict, infrastructure-grade CI recovery engine. Given a GitHub repository URL, it clones the code into a resource-limited Docker sandbox, infers the build system, classifies failures using deterministic pattern-matching heuristics, and applies bounded repair policies — ensuring full operational observability with no "AI blackbox" in the repair path.
 
-## 🔄 The Autonomous Pipeline
+## 🚀 The Dashboard
 
-```mermaid
-graph TD
-    A[GitHub URL Submitted] -->|Fetch| B(RepoClaw Pi Engine)
-    B --> C[Clone to Ephemeral Sandbox]
-    C --> D[Analyze Structure & Configs]
-    D --> E{Execute Docker Build}
-    E -->|Success| F([✅ Buildable Verdict])
-    E -->|Failure| G[Extract STDERR Logs]
-    G --> H[Gemini AI Classification]
-    H --> I[Inject Code Patch]
-    I -->|Retry| E
-    E -->|Max Retries Exceeded| J([❌ Non-Buildable Verdict])
+The RepoClaw frontend has been surgically designed as a high-density, authoritative CI/CD recovery console. It explicitly tracks:
+- **Compiler Logs:** Front-and-center raw terminal output.
+- **Execution Policy:** Static visibility into the constrained sandbox environment (`512MB Memory`, `1 Core`, `Readonly Mounts`).
+- **Recovery Provenance:** A full forensic trace of the pipeline, displaying the exact `Failure` classification, the `Strategy` applied, the `Mutation Surface` (e.g., `install_command`), and the post-repair `Validation` exit codes.
+
+## ⚙️ Architecture & Pipeline
+
+```
+Clone → Detect → Build → Classify → Select Policy → Apply Mutation → Rebuild → Validate → Provenance Record
 ```
 
-## 🛠 Technology Stack
-- **Core Orchestration:** TypeScript, Node.js (Pi Engine)
-- **Containerization:** Docker Desktop, Docker CLI integration
-- **AI Intelligence:** Gemini 2.5 Flash via Google Generative Language API
-- **Execution Strategy:** Stateless, decoupled "Skills" architecture
-- **State Management:** Ephemeral YAML memory & sandbox lifecycles
+Every repair strategy is a lookup in a deterministic policy table. The retry loop is strictly bounded at 3 cycles with material-mutation detection to prevent synthetic repetition.
 
-## 🎮 Run the Demo
-Experience the autonomous repair loop live against a real repository:
+## 🛡️ Key Design Decisions
 
+- **Heuristic-First Classification** — Regex pattern matching against 20+ known failure signatures with tiered match strengths.
+- **AI as a Constrained Fallback** — LLMs are only invoked when heuristics return `UNKNOWN`, capped at a maximum `0.75` match strength, and are **never** used to generate code patches.
+- **Policy-Driven Repair** — Each error category maps to a statically declared repair policy with allowed mutation surfaces, safety classifications (`SAFE`, `CONSTRAINED`), and rollback rules.
+- **Sandbox Security Limits** — Every Docker container enforces strict memory (`512MB`), CPU (`1.0`), PID (`256`), and privilege (`no-new-privileges`) constraints.
+
+## 🛠️ Supported Languages & Repair Classes
+
+| Language | Package Managers | Status |
+|----------|-----------------|--------|
+| Node.js  | npm, yarn, pnpm | Full support |
+| Python   | pip, poetry     | Full support |
+| Go / Rust / Java | go, cargo, maven | Build-only |
+
+### Auto-Repairable Failures
+* `MISSING_DEPENDENCY` → Append to install command (`SAFE`)
+* `DEPENDENCY_CONFLICT` → Inject legacy peer deps (`SAFE`)
+* `BUILD_SCRIPT_MISSING` → Inject package.json placeholder (`CONSTRAINED`)
+* `TYPESCRIPT_CONFIG_FAILURE` → Generate minimal tsconfig (`CONSTRAINED`)
+* `TYPESCRIPT_FAILURE` → Relax tsc strictness flags (`SAFE`)
+* `RUNTIME_VERSION_MISMATCH` → Strip engine constraint (`CONSTRAINED`)
+* `PYTHON_NATIVE_TOOLCHAIN_FAILURE` → Force binary-only wheels (`CONSTRAINED`)
+
+## 🏁 Judge / Local Setup Guide
+
+Follow these exact steps to run RepoClaw locally with zero conflicts.
+
+### Prerequisites
+1. **Node.js**: v20 or higher.
+2. **Docker**: Docker Desktop must be running.
+
+### 1. Warm Up the Sandbox Environment
+To prevent Docker latency during the live demo, pre-pull the sandbox image:
 ```bash
-# Clone and install dependencies
-git clone https://github.com/spbarathg/repoClaw.git
-cd RepoClaw
-npm install
-
-# Compile the TypeScript engine
-npx tsc --noEmit
-
-# Launch the autonomous demo against a target repository
-npm run demo https://github.com/developit/mitt
+docker pull node:20-alpine
 ```
 
-## 📄 Sample Verdict Artifact
-Upon completion, RepoClaw generates a detailed markdown report outlining its findings. It includes:
-- **Repository Intelligence:** Inferred architecture and build commands.
-- **Correction Cycle Log:** A table detailing the exact AI classifications, confidence scores, and patches applied.
-- **Final AI Reasoning:** A human-readable conclusion explaining exactly *why* the repository passed or failed (e.g., distinguishing between a syntax error and a broken infrastructure timeout).
+### 2. Start the Backend Engine
+```bash
+# From the root directory
+npm install
+npm start
+```
 
-*Check out the [sample_demo_output.md](docs/sample_demo_output.md) for a real-world example.*
+### 3. Start the Frontend Console
+Open a new terminal window:
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-## 💡 Why This Matters
-Developer productivity is crippled by "works on my machine" syndrome and abandoned open-source projects. RepoClaw bridges the gap between raw, unmaintained code and an immediately usable asset. By shifting the burden of environment configuration and dependency resolution to an AI agent, developers save hours of frustrating setup time.
+### 4. Run a Demo Scenario
+Navigate to `http://localhost:5173/` and input the local test repository:
+`file:///c:/Users/barat/samsung hackathon/RepoClaw/test-repos/demo-conflict`
+Click **Analyze** to watch the deterministic recovery pipeline in real-time.
 
-## 🔮 Future Scalability
-RepoClaw is designed as a foundational, OpenClaw-native building block. Its stateless skill architecture allows for infinite horizontal scaling. Future iterations will support:
-- Deep monorepo scanning and multi-service orchestration.
-- Seamless WebSocket ingress for real-time CI/CD pipeline integration.
-- Expanded language support (Rust, Go, C++) with dedicated compiler heuristic models.
+---
+
+*Unlike Dependabot (proactive dependency updates), RepoClaw operates reactively on already-broken builds. Unlike AI coding agents, RepoClaw uses deterministic policy-driven repair — no LLM hallucinations in the hot path.*

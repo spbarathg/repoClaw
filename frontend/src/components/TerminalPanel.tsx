@@ -28,7 +28,7 @@ export const TerminalPanel: React.FC = memo(() => {
   const getColor = (log: string) => {
     if (log.includes('[FATAL]') || log.includes('[ERROR]') || log.includes('❌')) return 'text-claw-red text-glow-red font-bold';
     if (log.includes('[WARN]') || log.includes('⚠️')) return 'text-yellow-400 font-medium';
-    if (log.includes('✅') || log.includes('SUCCESS') || log.includes('BUILDABLE')) return 'text-claw-emerald text-glow-emerald font-bold';
+    if (log.includes('✅') || log.includes('SUCCESS') || log.includes('BUILD_SUCCEEDED')) return 'text-claw-emerald text-glow-emerald font-bold';
     if (log.includes('[Pi Engine]') || log.includes('Skill:')) return 'text-claw-cyan font-medium';
     if (log.includes('[SYSTEM]')) return 'text-white/80 italic';
     return 'text-slate-400';
@@ -40,7 +40,7 @@ export const TerminalPanel: React.FC = memo(() => {
       
       <div className="bg-black/80 px-4 py-3 border-b border-white/10 flex items-center gap-3 relative z-10">
         <TerminalIcon size={14} className="text-slate-500" />
-        <span className="text-[10px] font-mono text-slate-500 tracking-[0.3em] uppercase">Intelligence_Feed</span>
+        <span className="text-[10px] font-mono text-slate-500 tracking-[0.3em] uppercase">Execution_Log</span>
         <div className="ml-auto flex gap-2 opacity-50 hover:opacity-100 transition-opacity">
           <div className="w-2.5 h-2.5 rounded-full bg-red-500/80 shadow-[0_0_5px_rgba(239,68,68,0.5)]"></div>
           <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80 shadow-[0_0_5px_rgba(250,204,21,0.5)]"></div>
@@ -60,7 +60,7 @@ export const TerminalPanel: React.FC = memo(() => {
               className="text-slate-600 italic animate-pulse flex items-center gap-2"
             >
               <div className="w-2 h-4 bg-claw-cyan animate-ping"></div>
-              Awaiting telemetry stream...
+               Awaiting pipeline output...
             </motion.div>
           ) : (
             logs.map((log, i) => (

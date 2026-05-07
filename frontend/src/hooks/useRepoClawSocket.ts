@@ -1,20 +1,22 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { logStore } from '../utils/logStore';
 
-export interface LiveIntelligence {
-  language: string | null;
-  packageManager: string | null;
-  currentCycle: string | null;
-  patchesApplied: string[];
-  reasoningStream: string[];
-}
-
-export interface ConfidenceMatrix {
-  manifestIntegrity: number;
-  dependencyStability: number;
-  buildSurface: number;
-  recoverability: number;
-  environmentRisk: number;
+export interface RepairTraceEntry {
+  cycle: number;
+  timestamp: string;
+  failureCategory: string;
+  matchStrength: number;
+  classificationSource: 'heuristic' | 'ai_fallback';
+  repairStrategy: string | null;
+  repairSafety: string | null;
+  mutationSurface: string | null;
+  commandBefore: string;
+  commandAfter: string;
+  rebuildExitCode: number | null;
+  rebuildDurationMs: number | null;
+  improved: boolean;
+  rolledBack: boolean;
+  rejectionReason: string | null;
 }
 
 export interface CommandMutation {
@@ -22,76 +24,86 @@ export interface CommandMutation {
   type: 'INSTALL' | 'BUILD';
   before: string;
   after: string;
-  asset: string;
+  surface: string;
 }
 
-export interface IntelligenceLedgerEntry {
+export interface PipelineProvenance {
+  pipelineVersion: string;
+  jobId: string;
+  targetUrl: string;
+  startedAt: string;
+  completedAt: string;
+  totalDurationMs: number;
+  sandboxImage: string;
+  dockerFlags: string[];
+  detectedStack: {
+    language: string;
+    packageManager: string;
+    lockfilePresent: boolean;
+    buildScriptPresent: boolean;
+  };
+  repairTrace: RepairTraceEntry[];
+  finalVerdict: string;
+  totalCycles: number;
+  totalMutationsApplied: number;
+}
+
+export interface HistoryLedgerEntry {
   jobId: string;
   url: string;
   category: string;
   verdict: string;
-  score: number;
   timestamp: string;
-}
-
-export interface ProtocolIdentity {
-  version: string;
-  sandboxImage: string;
-  fingerprint: string;
-  buildChainSignature: string;
 }
 
 export interface RepoClawState {
   status: 'IDLE' | 'CONNECTING' | 'RUNNING' | 'DONE' | 'ERROR' | 'OFFLINE';
-  stage: 'IDLE' | 'FETCH' | 'STRUCTURE' | 'BUILD' | 'CLASSIFY' | 'FIX' | 'RETRY' | 'VERDICT';
+  stage: 'IDLE' | 'CLONE' | 'DETECT' | 'BUILD' | 'CLASSIFY' | 'REPAIR' | 'REBUILD' | 'VERDICT';
   jobId: string | null;
   targetUrl: string | null;
   stack: string;
+  packageManager: string | null;
+  lockfilePresent: boolean;
+  buildScriptPresent: boolean;
   errorCategory: string | null;
-  confidence: number | null;
+  matchStrength: number | null;
+  classificationSource: string | null;
   verdict: string | null;
   report: string | null;
   interventionsAttempted: number;
-  generatedAssets: string[];
-  interventionSuccession: string[];
-  intelligence: LiveIntelligence;
-  forensicScore: number;
-  scoreGrade: string;
   retryCount: number;
-  confidenceMatrix?: ConfidenceMatrix;
   commandMutations: CommandMutation[];
-  intelligenceLedger: IntelligenceLedgerEntry[];
-  protocolIdentity?: ProtocolIdentity;
+  repairTrace: RepairTraceEntry[];
+  provenance: PipelineProvenance | null;
+  pipelineEvents: string[];
+  historyLedger: HistoryLedgerEntry[];
 }
 
-export function useRepoClawSocket() {
-  const [state, setState] = useState<RepoClawState>({
-    status: 'IDLE',
-    stage: 'IDLE',
-    jobId: null,
-    targetUrl: null,
-    stack: 'Awaiting Analysis',
-    errorCategory: null,
-    confidence: null,
-    verdict: null,
-    report: null,
-    interventionsAttempted: 0,
-    generatedAssets: [],
-    interventionSuccession: [],
-    intelligence: {
-      language: null,
-      packageManager: null,
-      currentCycle: null,
-      patchesApplied: [],
-      reasoningStream: []
-    },
-    forensicScore: 0,
-    scoreGrade: '?',
-    retryCount: 0,
-    commandMutations: [],
-    intelligenceLedger: []
-  });
+const INITIAL_STATE: RepoClawState = {
+  status: 'IDLE',
+  stage: 'IDLE',
+  jobId: null,
+  targetUrl: null,
+  stack: 'Awaiting Analysis',
+  packageManager: null,
+  lockfilePresent: false,
+  buildScriptPresent: false,
+  errorCategory: null,
+  matchStrength: null,
+  classificationSource: null,
+  verdict: null,
+  report: null,
+  interventionsAttempted: 0,
+  retryCount: 0,
+  commandMutations: [],
+  repairTrace: [],
+  provenance: null,
+  pipelineEvents: [],
+  historyLedger: [],
+};
 
+export function useRepoClawSocket() {
+  const [state, setState] = useState<RepoClawState>({ ...INITIAL_STATE });
   const wsRef = useRef<WebSocket | null>(null);
 
   const appendLog = (msg: string) => {
@@ -101,132 +113,95 @@ export function useRepoClawSocket() {
   const parseLogForState = (msg: string, meta?: any) => {
     setState((prev) => {
       const next = { ...prev };
-      const intel = { ...prev.intelligence };
-      let intelChanged = false;
 
-      if (msg.includes('Job ID Allocated:')) {
-        const match = msg.match(/Job ID Allocated:\s*(\d+)/);
+      // Job ID extraction
+      if (msg.includes('Job') && msg.includes('started for')) {
+        const match = msg.match(/Job (\d+) started for/);
         if (match) next.jobId = match[1];
       }
-      if (msg.includes('Target Origin:')) {
-        const match = msg.match(/Target Origin:\s*(https?:\/\/[^\s]+)/);
-        if (match) next.targetUrl = match[1];
-      }
-      
-      if (msg.includes('Cloning Target Repository')) next.stage = 'FETCH';
-      if (msg.includes('Analyzing Architectural Structure')) next.stage = 'STRUCTURE';
-      if (msg.includes('Entering Autonomous Build') || msg.includes('Executing Build Pass')) {
-         if (prev.stage === 'CLASSIFY' || prev.stage === 'FIX') next.stage = 'RETRY';
-         else next.stage = 'BUILD';
-      }
-      if (msg.includes('Root cause isolated:')) next.stage = 'CLASSIFY';
-      if (msg.includes('Auto-Fix Applied:')) next.stage = 'FIX';
-      if (msg.includes('Generating Final Intelligence Verdict')) next.stage = 'VERDICT';
 
-      if (msg.includes('Executing Build Pass [Cycle')) {
-        const match = msg.match(/\[Cycle (\d+\/\d+)\]/);
+      // Stage detection from pipeline event messages
+      if (msg.includes('[Clone]')) next.stage = 'CLONE';
+      if (msg.includes('[Detect]')) next.stage = 'DETECT';
+      if (msg.includes('[Build] Cycle') || msg.includes('[Build] Entering')) next.stage = 'BUILD';
+      if (msg.includes('[Classify]')) next.stage = 'CLASSIFY';
+      if (msg.includes('[Repair]')) next.stage = 'REPAIR';
+      if (msg.includes('[Build] Build succeeded') || msg.includes('[Build] Build repaired')) next.stage = 'BUILD';
+      if (msg.includes('[Verdict]')) next.stage = 'VERDICT';
+
+      // Classification extraction
+      if (msg.includes('[Classify]')) {
+        const match = msg.match(/\[Classify\]\s*(\S+)\s*\(match strength:\s*(\d+)%,\s*source:\s*(\w+)\)/);
         if (match) {
-          intel.currentCycle = match[1];
-          intelChanged = true;
+          next.errorCategory = match[1];
+          next.matchStrength = parseInt(match[2], 10);
+          next.classificationSource = match[3];
         }
       }
 
-      if (msg.includes('Root cause isolated:')) {
-         const match = msg.match(/Root cause isolated:\s*([A-Z_]+)\s*\(Confidence:\s*(\d+)%\)/);
-         if (match) {
-            next.errorCategory = match[1];
-            next.confidence = parseInt(match[2], 10);
-            intelChanged = true;
-         }
-      }
-
+      // Stack detection from meta
       if (meta) {
-         if (typeof meta.interventionsAttempted === 'number') next.interventionsAttempted = meta.interventionsAttempted;
-         if (Array.isArray(meta.generatedAssets)) next.generatedAssets = meta.generatedAssets;
-         if (Array.isArray(meta.interventionSuccession)) next.interventionSuccession = meta.interventionSuccession;
-         if (Array.isArray(meta.reasoningFeed)) {
-            intel.reasoningStream = meta.reasoningFeed.slice(-15);
-            intelChanged = true;
-         }
-         if (meta.stack) {
-            if (meta.stack.language) { intel.language = meta.stack.language; intelChanged = true; next.stack = meta.stack.language; }
-            if (meta.stack.packageManager) { intel.packageManager = meta.stack.packageManager; intelChanged = true; }
-         }
+        if (typeof meta.interventionsAttempted === 'number') next.interventionsAttempted = meta.interventionsAttempted;
+        if (Array.isArray(meta.commandMutations)) next.commandMutations = meta.commandMutations;
+        if (Array.isArray(meta.repairTrace)) next.repairTrace = meta.repairTrace;
+        if (Array.isArray(meta.pipelineEvents)) next.pipelineEvents = meta.pipelineEvents;
+        if (meta.stack) {
+          if (meta.stack.language) next.stack = meta.stack.language;
+          if (meta.stack.packageManager) next.packageManager = meta.stack.packageManager;
+          if (typeof meta.stack.lockfilePresent === 'boolean') next.lockfilePresent = meta.stack.lockfilePresent;
+          if (typeof meta.stack.buildScriptPresent === 'boolean') next.buildScriptPresent = meta.stack.buildScriptPresent;
+        }
       }
-
-      if (intelChanged) next.intelligence = intel;
 
       return next;
     });
   };
 
   const checkConnection = useCallback(() => {
-     const ws = new WebSocket('ws://localhost:3000');
-     ws.onopen = () => {
-        ws.close();
-        setState(prev => prev.status === 'OFFLINE' ? { ...prev, status: 'IDLE' } : prev);
-     };
-     ws.onerror = () => {
-        setState(prev => prev.status !== 'OFFLINE' ? { ...prev, status: 'OFFLINE' } : prev);
-     };
+    const ws = new WebSocket('ws://localhost:3000');
+    ws.onopen = () => {
+      ws.close();
+      setState(prev => prev.status === 'OFFLINE' ? { ...prev, status: 'IDLE' } : prev);
+    };
+    ws.onerror = () => {
+      setState(prev => prev.status !== 'OFFLINE' ? { ...prev, status: 'OFFLINE' } : prev);
+    };
   }, []);
 
   useEffect(() => {
-     checkConnection();
-     const interval = setInterval(checkConnection, 5000);
-     
-     // Fetch initial history on mount
-     const initWs = new WebSocket('ws://localhost:3000');
-     initWs.onopen = () => {
-       initWs.send(JSON.stringify({ action: 'GET_HISTORY' }));
-     };
-     initWs.onmessage = (event) => {
-       try {
-         const payload = JSON.parse(event.data);
-         if (payload.status === 'HISTORY_SYNC') {
-           setState(prev => ({ ...prev, intelligenceLedger: payload.history }));
-           initWs.close();
-         }
-       } catch (e) {}
-     };
-     
-     return () => {
-       clearInterval(interval);
-       initWs.close();
-     };
+    checkConnection();
+    const interval = setInterval(checkConnection, 5000);
+
+    // Fetch initial history on mount
+    const initWs = new WebSocket('ws://localhost:3000');
+    initWs.onopen = () => {
+      initWs.send(JSON.stringify({ action: 'GET_HISTORY' }));
+    };
+    initWs.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.status === 'HISTORY_SYNC') {
+          setState(prev => ({ ...prev, historyLedger: payload.history }));
+          initWs.close();
+        }
+      } catch (e) {}
+    };
+
+    return () => {
+      clearInterval(interval);
+      initWs.close();
+    };
   }, [checkConnection]);
 
   const analyze = useCallback((url: string) => {
     if (wsRef.current) wsRef.current.close();
-    
-    setState((prev) => ({
-      ...prev,
+
+    setState({
+      ...INITIAL_STATE,
       status: 'CONNECTING',
-      stage: 'IDLE',
-      jobId: null,
       targetUrl: url,
       stack: 'Analyzing...',
-      errorCategory: null,
-      confidence: null,
-      verdict: null,
-      report: null,
-      interventionsAttempted: 0,
-      generatedAssets: [],
-      interventionSuccession: [],
-      intelligence: {
-        language: null,
-        packageManager: null,
-        currentCycle: null,
-        patchesApplied: [],
-        reasoningStream: []
-      },
-      forensicScore: 0,
-      scoreGrade: '?',
-      retryCount: 0,
-      commandMutations: [],
-      confidenceMatrix: undefined,
-      protocolIdentity: undefined
-    }));
+    });
 
     try {
       const ws = new WebSocket('ws://localhost:3000');
@@ -235,13 +210,12 @@ export function useRepoClawSocket() {
       ws.onopen = () => {
         logStore.clear();
         setState((prev) => ({ ...prev, status: 'RUNNING' }));
-        appendLog(`[SYSTEM] WebSocket Link Established. Instructing Pi Engine on ${url}...`);
-        
-        // Small delay to ensure backend has registered the message listener
+        appendLog(`[SYSTEM] Connected. Starting pipeline for ${url}`);
+
         setTimeout(() => {
-           if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ url }));
-           }
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ url }));
+          }
         }, 100);
       };
 
@@ -249,35 +223,31 @@ export function useRepoClawSocket() {
         try {
           const payload = JSON.parse(event.data);
           if (payload.status === 'HISTORY_SYNC') {
-            setState((prev) => ({ ...prev, intelligenceLedger: payload.history }));
+            setState((prev) => ({ ...prev, historyLedger: payload.history }));
           } else if (payload.status === 'PROGRESS') {
             appendLog(payload.message);
             parseLogForState(payload.message, payload.meta);
           } else if (payload.status === 'DONE') {
             const fs = payload.finalState;
-            setState((prev) => ({ 
-              ...prev, 
-              status: 'DONE', 
-              stage: 'VERDICT', 
-              report: fs?.report ?? payload.report, 
-              verdict: fs?.verdict ?? payload.verdict,
+            setState((prev) => ({
+              ...prev,
+              status: 'DONE',
+              stage: 'VERDICT',
+              report: fs?.report ?? null,
+              verdict: fs?.verdict ?? null,
               errorCategory: fs?.errorCategory ?? prev.errorCategory,
-              generatedAssets: fs?.generatedAssets ?? prev.generatedAssets,
-              interventionSuccession: fs?.interventionSuccession ?? prev.interventionSuccession,
+              matchStrength: fs?.matchStrength != null ? Math.round(fs.matchStrength * 100) : prev.matchStrength,
+              classificationSource: fs?.classificationSource ?? prev.classificationSource,
               interventionsAttempted: fs?.interventionsAttempted ?? prev.interventionsAttempted,
-              confidence: fs?.confidence != null ? Math.round(fs.confidence * 100) : prev.confidence,
-              forensicScore: fs?.forensicScore ?? 0,
-              scoreGrade: fs?.scoreGrade ?? 'F',
               retryCount: fs?.retryCount ?? 0,
-              confidenceMatrix: fs?.confidenceMatrix,
               commandMutations: fs?.commandMutations || [],
-              protocolIdentity: fs?.protocolIdentity,
-              intelligence: {
-                ...prev.intelligence,
-                language: fs?.stack?.language ?? prev.intelligence.language,
-                packageManager: fs?.stack?.packageManager ?? prev.intelligence.packageManager,
-                reasoningStream: fs?.reasoningFeed?.length ? fs.reasoningFeed.slice(-15) : prev.intelligence.reasoningStream,
-              }
+              repairTrace: fs?.repairTrace || [],
+              provenance: fs?.provenance || null,
+              pipelineEvents: fs?.pipelineEvents || prev.pipelineEvents,
+              stack: fs?.stack?.language ?? prev.stack,
+              packageManager: fs?.stack?.packageManager ?? prev.packageManager,
+              lockfilePresent: fs?.stack?.lockfilePresent ?? prev.lockfilePresent,
+              buildScriptPresent: fs?.stack?.buildScriptPresent ?? prev.buildScriptPresent,
             }));
             appendLog(`[SYSTEM] Pipeline complete.`);
           } else if (payload.status === 'ERROR') {
@@ -291,7 +261,7 @@ export function useRepoClawSocket() {
 
       ws.onerror = () => {
         setState((prev) => ({ ...prev, status: 'ERROR' }));
-        appendLog('[FATAL] WebSocket Connection Refused. Is the Gateway running on port 3000?');
+        appendLog('[FATAL] WebSocket connection refused. Is the backend running on port 3000?');
       };
 
       ws.onclose = () => {

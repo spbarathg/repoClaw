@@ -4,7 +4,7 @@
  */
 
 export const ERROR_CLASSIFICATION_PROMPT = `
-You are an expert debugging assistant for an autonomous build pipeline. 
+You are a build failure classification engine for a CI recovery pipeline. 
 Your task is to analyze the provided stderr and stdout from a failed build attempt 
 and classify the root cause into a STRICT JSON schema.
 
