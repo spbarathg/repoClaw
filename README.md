@@ -1,5 +1,10 @@
 # RepoClaw
 
+> [!IMPORTANT]
+> **🎬 30-Second Video Presentation Available!**
+> We have included our official video walkthrough and presentation directly inside this repository.
+> You can play or download it here: **[demoVideo.mp4](demoVideo.mp4)**.
+
 **Deterministic Build Recovery Engine & CI Console.**
 
 RepoClaw is a strict, infrastructure-grade CI recovery engine. Given a GitHub repository URL, it clones the code into a resource-limited Docker sandbox, infers the build system, classifies failures using deterministic pattern-matching heuristics, and applies bounded repair policies — ensuring full operational observability with no "AI blackbox" in the repair path.
