@@ -15,6 +15,8 @@ import { setupSandbox, cleanupSandbox } from '../sandbox/container_mgr';
 import { persistJobState } from './memory';
 import { config } from '../config';
 
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: string, meta?: any) => void): Promise<JobState> => {
   const jobId = Date.now().toString();
   const startedAt = new Date().toISOString();
@@ -31,11 +33,21 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     commandMutations: [],
     repairTrace: [],
     pipelineEvents: [],
+    simulateViolation: request.simulateViolation,
+    cycleLogs: {},
   };
 
   const emit = (msg: string) => {
     logger.info(msg);
     jobState.pipelineEvents.push(`[${new Date().toISOString().split('T')[1].slice(0,-1)}] ${msg}`);
+    
+    // Track logs per cycle
+    const currentCycle = jobState.retryCount + 1;
+    if (jobState.cycleLogs) {
+      jobState.cycleLogs[currentCycle] = jobState.cycleLogs[currentCycle] || [];
+      jobState.cycleLogs[currentCycle].push(msg);
+    }
+
     if (onProgress) {
       onProgress(msg, {
         interventionsAttempted: jobState.interventionsAttempted,
@@ -43,6 +55,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
         repairTrace: jobState.repairTrace,
         stack: jobState.stack,
         pipelineEvents: jobState.pipelineEvents,
+        cycleLogs: jobState.cycleLogs,
       });
     }
   };
@@ -57,11 +70,13 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
     logger.phase('STAGE 1', 'Cloning Repository');
     emit(`[Clone] Cloning ${request.url} (depth=1, timeout=60s)`);
     await repoFetch(jobState);
+    await delay(1200);
 
     // ━━━ STAGE 2: DETECT ━━━
     logger.phase('STAGE 2', 'Detecting Build System');
     emit(`[Detect] Scanning project structure and manifests`);
     await structureAnalyze(jobState);
+    await delay(800);
 
     if (jobState.status === 'UNSUPPORTED') {
       logger.warn(`[Pipeline] No executable build surface detected`);
@@ -121,6 +136,23 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
       lastDockerImage = buildResult.dockerImage;
       lastDockerFlags = buildResult.dockerFlags;
 
+      emit(`[Container] Spawning sandboxed container using image: ${buildResult.dockerImage}...`);
+      emit(`[Container] Running build command: ${jobState.stack?.buildCommand || 'npm run build'}`);
+      
+      const stdoutLines = buildResult.stdout.split('\n');
+      for (const line of stdoutLines) {
+        if (line.trim() !== '') {
+          emit(`[stdout] ${line}`);
+        }
+      }
+      
+      const stderrLines = buildResult.stderr.split('\n');
+      for (const line of stderrLines) {
+        if (line.trim() !== '') {
+          emit(`[stderr] ${line}`);
+        }
+      }
+
       if (buildResult.success) {
         logger.success(`[Pipeline] Build succeeded (exit code 0, ${buildResult.durationMs}ms)`);
         success = true;
@@ -130,6 +162,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
         logger.warn(`[Pipeline] Build failed on cycle ${jobState.retryCount + 1}`);
 
         // ━━━ CLASSIFY ━━━
+        await delay(1500);
         const errorDetails = await errorClassifier(buildResult.stdout, buildResult.stderr);
         prevCategory = errorDetails.category;
         jobState.errors.push(errorDetails);
@@ -174,6 +207,7 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
           emit(`[Repair] Policy: ${policy.description} | Safety: ${policy.safety} | Surfaces: [${policy.allowedMutationSurfaces.join(', ')}]`);
         }
 
+        await delay(1000);
         const fixResult = await autoFix(jobState, errorDetails);
 
         // Record command mutations
@@ -200,6 +234,28 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
 
         if (fixResult.rejected) {
           emit(`[Repair] Rejected: ${fixResult.rejectionReason}`);
+          if (fixResult.safety === 'DISALLOWED') {
+            jobState.status = 'SANDBOX_VIOLATION';
+            jobState.repairTrace.push({
+              cycle: jobState.retryCount + 1,
+              timestamp: new Date().toISOString(),
+              failureCategory: errorDetails.category,
+              matchStrength: errorDetails.matchStrength,
+              classificationSource: errorDetails.classificationSource,
+              repairStrategy: fixResult.strategy,
+              repairSafety: fixResult.safety,
+              mutationSurface: null,
+              commandBefore: snapshot.installCommand,
+              commandAfter: snapshot.installCommand,
+              rebuildExitCode: null,
+              rebuildDurationMs: null,
+              improved: false,
+              rolledBack: false,
+              rejectionReason: fixResult.rejectionReason,
+              fileMutated: null
+            });
+            break;
+          }
         } else if (fixResult.patched) {
           emit(`[Repair] Applied: ${fixResult.strategy} (safety: ${fixResult.safety})`);
         } else {
@@ -207,23 +263,26 @@ export const piEngineRun = async (request: AnalysisRequest, onProgress?: (msg: s
         }
 
         // Build repair trace entry
-        jobState.repairTrace.push({
-          cycle: jobState.retryCount + 1,
-          timestamp: new Date().toISOString(),
-          failureCategory: errorDetails.category,
-          matchStrength: errorDetails.matchStrength,
-          classificationSource: errorDetails.classificationSource,
-          repairStrategy: fixResult.strategy,
-          repairSafety: fixResult.safety,
-          mutationSurface: fixResult.mutationSurface,
-          commandBefore: snapshot.installCommand,
-          commandAfter: jobState.stack?.installCommand || '',
-          rebuildExitCode: null,   // Will be filled on next cycle
-          rebuildDurationMs: null,
-          improved: false,         // Will be evaluated on next cycle
-          rolledBack: false,
-          rejectionReason: fixResult.rejectionReason,
-        });
+        if (!fixResult.rejected) {
+          jobState.repairTrace.push({
+            cycle: jobState.retryCount + 1,
+            timestamp: new Date().toISOString(),
+            failureCategory: errorDetails.category,
+            matchStrength: errorDetails.matchStrength,
+            classificationSource: errorDetails.classificationSource,
+            repairStrategy: fixResult.strategy,
+            repairSafety: fixResult.safety,
+            mutationSurface: fixResult.mutationSurface,
+            commandBefore: snapshot.installCommand,
+            commandAfter: jobState.stack?.installCommand || '',
+            rebuildExitCode: null,   // Will be filled on next cycle
+            rebuildDurationMs: null,
+            improved: false,         // Will be evaluated on next cycle
+            rolledBack: false,
+            rejectionReason: fixResult.rejectionReason,
+            fileMutated: fixResult.fileMutated
+          });
+        }
 
         jobState.retryCount++;
       }

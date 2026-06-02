@@ -34,6 +34,9 @@ export type MutationSurface =
   | 'build_command'
   | 'package_json:scripts'
   | 'package_json:engines'
+  | 'package_json:dependencies'
+  | 'requirements_txt'
+  | 'npmrc'
   | 'tsconfig'
   | 'env_file';
 
@@ -51,6 +54,7 @@ export interface AnalysisRequest {
   url: string;
   source: 'websocket' | 'cli';
   chatId: string;
+  simulateViolation?: boolean;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━ COMMAND MUTATION ━━━━━━━━━━━━━━━━━━━━
@@ -79,6 +83,12 @@ export interface RepairTraceEntry {
   improved: boolean;
   rolledBack: boolean;
   rejectionReason: string | null;
+  fileMutated?: {
+    path: string;
+    contentBefore: string;
+    contentAfter: string;
+  } | null;
+  logs?: string[];
 }
 
 // ━━━━━━━━━━━━━━━━━━━━ PIPELINE PROVENANCE ━━━━━━━━━━━━━━━━━━━━
@@ -128,6 +138,8 @@ export interface JobState {
   repairTrace: RepairTraceEntry[];
   provenance?: PipelineProvenance;
   pipelineEvents: string[];
+  simulateViolation?: boolean;
+  cycleLogs?: Record<number, string[]>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━ TECH STACK ━━━━━━━━━━━━━━━━━━━━
@@ -169,4 +181,9 @@ export interface FixStrategyResult {
   mutationSurface: MutationSurface | null;
   rejected: boolean;
   rejectionReason: string | null;
+  fileMutated?: {
+    path: string;
+    contentBefore: string;
+    contentAfter: string;
+  } | null;
 }

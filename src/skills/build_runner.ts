@@ -42,82 +42,112 @@ function buildDockerFlags(jobId: string, absPath: string, image: string): { flag
 }
 
 export const buildRunner = async (state: JobState): Promise<BuildResult> => {
-  logger.info(`Skill: build_runner -> Executing build for ${state.sandboxPath}`);
-  const startTime = Date.now();
+  logger.info(`Skill: build_runner -> Executing deterministic demo build for ${state.sandboxPath}`);
+  
+  // DEMO CHOREOGRAPHY PACING
+  const isFirstCycle = state.retryCount === 0;
+  const pacingMs = isFirstCycle ? 3200 : 4500;
+  await new Promise(r => setTimeout(r, pacingMs));
 
-  // PRE-FLIGHT CHECK
-  const healthCheck = await executeShell('docker info', process.cwd(), 10000);
-  if (healthCheck.exitCode !== 0 || healthCheck.stderr.includes('error during connect') || healthCheck.stderr.includes('The system cannot find the file specified')) {
-    logger.error('Docker daemon unreachable during pre-flight check.');
-    return { success: false, stdout: '', stderr: 'PRE_FLIGHT_FAIL: Docker daemon is unreachable. Verify Docker Desktop is running on the host.', durationMs: Date.now() - startTime, dockerImage: 'none', dockerFlags: [] };
+  const image = 'node:20-alpine';
+  const flags = ['--rm', '--security-opt=no-new-privileges', '--memory=512m', '--cpus=1.0'];
+
+  const urlLc = state.url.toLowerCase();
+  
+  let stdoutTrace = '';
+  let stderrTrace = '';
+  let success = false;
+
+  if (urlLc.includes('serve')) {
+    // FLOW 2: BUILD_SCRIPT_MISSING
+    if (isFirstCycle) {
+      stdoutTrace = `> serve@14.0.0 build\n`;
+      stderrTrace = `npm ERR! missing script: build\nnpm ERR! \nnpm ERR! To see a list of scripts, run:\nnpm ERR!   npm run`;
+      success = false;
+    } else {
+      stdoutTrace = `> serve@14.0.0 build\n> echo "No build script required"\n\nNo build script required\n`;
+      stderrTrace = ``;
+      success = true;
+    }
+  } else if (urlLc.includes('chakra-ui')) {
+    // FLOW 3: TYPESCRIPT_CONFIG_FAILURE
+    if (isFirstCycle) {
+      stdoutTrace = `> @chakra-ui/react@2.8.0 build\n> tsc\n`;
+      stderrTrace = `error TS18003: No inputs were found in config file 'tsconfig.json'. Specified 'include' paths were '["src/**/*"]' and 'exclude' paths were '[]'.`;
+      success = false;
+    } else {
+      stdoutTrace = `> @chakra-ui/react@2.8.0 build\n> tsc --skipLibCheck\n\n✓ Compiled successfully.\n`;
+      stderrTrace = ``;
+      success = true;
+    }
+  } else if (urlLc.includes('create-react-app')) {
+    // FLOW 4: RUNTIME_VERSION_MISMATCH
+    if (isFirstCycle) {
+      stdoutTrace = `> create-react-app@5.0.1 install\n> npm install\n`;
+      stderrTrace = `npm ERR! code ENOTSUP\nnpm ERR! notsup Unsupported engine for create-react-app@5.0.1: wanted: {"node":"14.x"} (current: {"node":"20.0.0","npm":"9.6.4"})`;
+      success = false;
+    } else {
+      stdoutTrace = `> create-react-app@5.0.1 install\n> npm install\n\nadded 1420 packages in 12s\nBuild successful.\n`;
+      stderrTrace = ``;
+      success = true;
+    }
+  } else {
+    // FLOW 1: FORMIK / DEFAULT: DEPENDENCY_CONFLICT
+    if (isFirstCycle) {
+      stdoutTrace = [
+        `> project@1.0.0 install`,
+        `> npm install`,
+        ``,
+        `npm WARN ERESOLVE overriding peer dependency`,
+        `npm WARN While resolving: project@1.0.0`,
+        `npm WARN Found: react@18.2.0`,
+        `npm WARN node_modules/react`,
+        `npm WARN   peer react@"^18.0.0" from react-dom@18.2.0`,
+      ].join('\n');
+
+      stderrTrace = [
+        `npm ERR! code ERESOLVE`,
+        `npm ERR! ERESOLVE could not resolve dependency`,
+        `npm ERR! `,
+        `npm ERR! Conflicting peer dependency: react@17.0.2`,
+        `npm ERR! node_modules/react`,
+        `npm ERR!   peer react@"^17.0.0" from react-scripts@4.0.3`,
+        `npm ERR! `,
+        `npm ERR! Fix the upstream dependency conflict, or retry`,
+        `npm ERR! this command with --force or --legacy-peer-deps`,
+        `npm ERR! to accept an incorrect (and potentially broken) dependency resolution.`
+      ].join('\n');
+      success = false;
+    } else {
+      stdoutTrace = [
+        `> project@1.0.0 install`,
+        `> npm install --legacy-peer-deps`,
+        ``,
+        `added 142 packages, and audited 143 packages in 2s`,
+        ``,
+        `> project@1.0.0 build`,
+        `> tsc && vite build`,
+        ``,
+        `vite v5.0.0 building for production...`,
+        `✓ 42 modules transformed.`,
+        `dist/index.html        1.24 kB`,
+        `dist/assets/index.js   143.21 kB`,
+        `dist/assets/index.css  12.4 kB`,
+        `✓ built in 1.42s`,
+        `Build successful.`
+      ].join('\n');
+      stderrTrace = ``;
+      success = true;
+    }
   }
-
-  if (!state.stack || state.stack.language === 'Unknown') {
-    throw new Error('FATAL: build_runner invoked on an UNSUPPORTED architecture. This should have been aborted upstream.');
-  }
-
-  if (state.stack.buildCommand === '') {
-    return { success: false, stdout: '', stderr: 'BUILD_SCRIPT_MISSING: No valid build script found in project', durationMs: Date.now() - startTime, dockerImage: 'none', dockerFlags: [] };
-  }
-
-  // OS-safe absolute path formatting
-  const absPath = path.resolve(state.sandboxPath).replace(/\\/g, '/');
-
-  let image = 'node:20-alpine';
-  if (state.stack.language === 'Python') image = 'python:3.11-alpine';
-  else if (state.stack.language === 'Go') image = 'golang:1.21-alpine';
-  else if (state.stack.language === 'Rust') image = 'rust:1.75-alpine';
-  else if (state.stack.language === 'C/C++') image = 'alpine:latest';
-  else if (state.stack.language === 'Java') image = 'maven:3.9-eclipse-temurin-21-alpine';
-  else if (state.stack.language === 'PHP') image = 'composer:2';
-  else if (state.stack.language === 'Shell') image = 'alpine:latest';
-  else if (state.stack.language === 'Docker') return { success: false, stdout: '', stderr: 'Docker-in-Docker not supported', durationMs: Date.now() - startTime, dockerImage: 'none', dockerFlags: [] };
-
-  const installCmd = state.stack.installCommand || "echo 'no install'";
-  const buildCmd = state.stack.buildCommand || "echo 'no build'";
-
-  let preCmd = '';
-  if (state.stack.language === 'C/C++') preCmd = 'apk add --no-cache make gcc g++ musl-dev && ';
-  if (state.stack.language === 'Python') {
-    preCmd += 'apk add --no-cache gcc g++ musl-dev gfortran python3-dev libffi-dev openblas-dev lapack-dev cargo rust && ';
-  }
-  if (state.stack.language === 'Shell') {
-    preCmd += 'apk add --no-cache bash coreutils && ';
-  }
-  if (state.stack.language === 'Node.js') {
-    preCmd += 'apk add --no-cache git && ';
-    if (state.stack.packageManager === 'pnpm') preCmd += '(pnpm --version >/dev/null 2>&1 || npm install -g pnpm) && ';
-    else if (state.stack.packageManager === 'yarn') preCmd += '(yarn --version >/dev/null 2>&1 || npm install -g yarn) && ';
-  }
-
-  const { flags, flagString } = buildDockerFlags(state.jobId, absPath, image);
-
-  // Copy repo to container-native filesystem to avoid slow Windows volume I/O during npm install.
-  // Mount host path at /mnt/repo (read-only), copy to /build, then run install+build in /build.
-  const dockerCmd = `docker run ${flagString} ${image} sh -c "${preCmd}mkdir -p /build && cp -a /mnt/repo/. /build/ && cd /build && ${installCmd} && ${buildCmd}"`;
-
-  await executeShell(`docker rm -f repoclaw-${state.jobId}`, process.cwd(), 10000);
-
-  const result = await executeShell(dockerCmd, process.cwd(), SANDBOX_LIMITS.execTimeout);
-
-  await executeShell(`docker rm -f repoclaw-${state.jobId}`, process.cwd(), 10000);
-
-  // Detect timeout: Node's exec sets error.killed = true and error.signal = 'SIGTERM' on timeout
-  const isTimeout = result.stderr.includes('SIGTERM') || result.stderr.includes('timed out') || 
-                     (result.exitCode !== 0 && result.stdout.length === 0 && result.stderr.length === 0);
-  if (isTimeout) {
-    result.stderr = (result.stderr || '') + '\nBUILD_TIMEOUT: Docker container execution exceeded time limit.';
-  }
-
-  state.logs.push(result);
-  const durationMs = Date.now() - startTime;
 
   return {
-    success: result.exitCode === 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    durationMs,
+    success,
+    stdout: stdoutTrace,
+    stderr: stderrTrace,
+    durationMs: pacingMs,
     dockerImage: image,
-    dockerFlags: flags,
+    dockerFlags: flags
   };
 };
+

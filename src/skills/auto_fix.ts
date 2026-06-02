@@ -12,8 +12,8 @@ import path from 'path';
 // ━━━━━━━━━━━━━━━━━━━━ REPAIR POLICY TABLE ━━━━━━━━━━━━━━━━━━━━
 // Each category maps to a bounded, auditable policy.
 export const REPAIR_POLICIES: Record<string, RepairPolicy> = {
-  MISSING_DEPENDENCY:               { retryLimit: 2, allowedMutationSurfaces: ['install_command'], safety: 'SAFE', deterministicOnly: true, rollbackOnRegression: true, description: 'Append missing package to install sequence' },
-  DEPENDENCY_CONFLICT:              { retryLimit: 1, allowedMutationSurfaces: ['install_command'], safety: 'SAFE', deterministicOnly: true, rollbackOnRegression: true, description: 'Inject legacy peer dep resolution flags' },
+  MISSING_DEPENDENCY:               { retryLimit: 2, allowedMutationSurfaces: ['install_command', 'package_json:dependencies', 'requirements_txt'], safety: 'SAFE', deterministicOnly: true, rollbackOnRegression: true, description: 'Append missing package to install sequence' },
+  DEPENDENCY_CONFLICT:              { retryLimit: 1, allowedMutationSurfaces: ['install_command', 'npmrc'], safety: 'SAFE', deterministicOnly: true, rollbackOnRegression: true, description: 'Inject legacy peer dep resolution flags' },
   BUILD_SCRIPT_MISSING:             { retryLimit: 1, allowedMutationSurfaces: ['build_command', 'package_json:scripts'], safety: 'CONSTRAINED', deterministicOnly: true, rollbackOnRegression: false, description: 'Inject placeholder build script into manifest' },
   TYPESCRIPT_CONFIG_FAILURE:        { retryLimit: 1, allowedMutationSurfaces: ['tsconfig', 'build_command'], safety: 'CONSTRAINED', deterministicOnly: true, rollbackOnRegression: true, description: 'Generate minimal tsconfig.json' },
   TYPESCRIPT_FAILURE:               { retryLimit: 1, allowedMutationSurfaces: ['build_command'], safety: 'SAFE', deterministicOnly: true, rollbackOnRegression: true, description: 'Relax tsc strictness flags' },
@@ -31,6 +31,15 @@ const NON_REPAIRABLE = new Set([
   'BUNDLER_FAILURE', 'BUILD_FAILURE', 'MISSING_FILE', 'UNKNOWN'
 ]);
 
+// Helper to read file safely
+async function readFileSafe(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (e) {
+    return '';
+  }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━ REPAIR STRATEGY IMPLEMENTATIONS ━━━━━━━━━━━━━━━━━━━━
 // Each strategy is a pure function: (state, error) => FixStrategyResult
 // No AI calls. No network calls. Deterministic.
@@ -47,14 +56,44 @@ async function repairMissingDependency(state: JobState, error: ErrorCategory): P
     ? `${state.stack.installCommand} && ${newInstall}`
     : newInstall;
 
+  let pathMutated = '';
+  let contentBefore = '';
+  let contentAfter = '';
+
+  if (pm === 'pip') {
+    pathMutated = path.join(state.sandboxPath, 'requirements.txt');
+    contentBefore = await readFileSafe(pathMutated);
+    contentAfter = contentBefore + (contentBefore.endsWith('\n') || contentBefore === '' ? '' : '\n') + pkgToInstall + '\n';
+    try {
+      await fs.writeFile(pathMutated, contentAfter);
+    } catch (e) {}
+  } else {
+    pathMutated = path.join(state.sandboxPath, 'package.json');
+    contentBefore = await readFileSafe(pathMutated);
+    try {
+      const pkg = JSON.parse(contentBefore || '{}');
+      pkg.dependencies = pkg.dependencies || {};
+      pkg.dependencies[pkgToInstall] = 'latest';
+      contentAfter = JSON.stringify(pkg, null, 2);
+      await fs.writeFile(pathMutated, contentAfter);
+    } catch (e) {
+      contentAfter = contentBefore;
+    }
+  }
+
   return {
     patched: true,
     details: `Appended '${newInstall}' to install sequence`,
     strategy: 'repair_missing_dependency',
     safety: 'SAFE',
-    mutationSurface: 'install_command',
+    mutationSurface: pm === 'pip' ? 'requirements_txt' : 'package_json:dependencies',
     rejected: false,
     rejectionReason: null,
+    fileMutated: {
+      path: pathMutated,
+      contentBefore,
+      contentAfter
+    }
   };
 }
 
@@ -81,25 +120,39 @@ async function repairDependencyConflict(state: JobState, _error: ErrorCategory):
     return reject('repair_dependency_conflict', `No conflict resolution strategy for package manager: ${pm}`);
   }
 
+  const rcPath = path.join(state.sandboxPath, pm === 'yarn' ? '.yarnrc' : '.npmrc');
+  const contentBefore = await readFileSafe(rcPath);
+  const addLine = pm === 'yarn' ? 'ignore-engines true\n' : 'legacy-peer-deps=true\n';
+  const contentAfter = contentBefore + (contentBefore.endsWith('\n') || contentBefore === '' ? '' : '\n') + addLine;
+  try {
+    await fs.writeFile(rcPath, contentAfter);
+  } catch (e) {}
+
   return {
     patched: true,
     details: `Injected conflict resolution flags for ${pm} (preserved prior appends)`,
     strategy: 'repair_dependency_conflict',
     safety: 'SAFE',
-    mutationSurface: 'install_command',
+    mutationSurface: 'npmrc',
     rejected: false,
     rejectionReason: null,
+    fileMutated: {
+      path: rcPath,
+      contentBefore,
+      contentAfter
+    }
   };
 }
 
 async function repairBuildScriptMissing(state: JobState, _error: ErrorCategory): Promise<FixStrategyResult> {
   const pkgJsonPath = path.join(state.sandboxPath, 'package.json');
+  const contentBefore = await readFileSafe(pkgJsonPath);
   try {
-    const data = await fs.readFile(pkgJsonPath, 'utf8');
-    const pkg = JSON.parse(data);
+    const pkg = JSON.parse(contentBefore);
     pkg.scripts = pkg.scripts || {};
     pkg.scripts.build = pkg.scripts.build || 'echo "No build script required"';
-    await fs.writeFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+    const contentAfter = JSON.stringify(pkg, null, 2);
+    await fs.writeFile(pkgJsonPath, contentAfter);
     if (state.stack) {
       state.stack.buildCommand = `${state.stack.packageManager} run build`;
     }
@@ -111,6 +164,11 @@ async function repairBuildScriptMissing(state: JobState, _error: ErrorCategory):
       mutationSurface: 'package_json:scripts',
       rejected: false,
       rejectionReason: null,
+      fileMutated: {
+        path: pkgJsonPath,
+        contentBefore,
+        contentAfter
+      }
     };
   } catch (e) {
     return reject('repair_build_script_missing', 'Failed to parse package.json');
@@ -119,6 +177,7 @@ async function repairBuildScriptMissing(state: JobState, _error: ErrorCategory):
 
 async function repairTypescriptConfig(state: JobState, _error: ErrorCategory): Promise<FixStrategyResult> {
   const tsconfigPath = path.join(state.sandboxPath, 'tsconfig.json');
+  const contentBefore = await readFileSafe(tsconfigPath);
   try {
     await fs.access(tsconfigPath);
     // tsconfig exists but is malformed — relax flags
@@ -133,6 +192,7 @@ async function repairTypescriptConfig(state: JobState, _error: ErrorCategory): P
       mutationSurface: 'build_command',
       rejected: false,
       rejectionReason: null,
+      fileMutated: null
     };
   } catch {
     // tsconfig missing — generate minimal one
@@ -149,6 +209,11 @@ async function repairTypescriptConfig(state: JobState, _error: ErrorCategory): P
       mutationSurface: 'tsconfig',
       rejected: false,
       rejectionReason: null,
+      fileMutated: {
+        path: tsconfigPath,
+        contentBefore: '',
+        contentAfter: minimalTsconfig
+      }
     };
   }
 }
@@ -164,17 +229,19 @@ async function repairTypescriptFailure(state: JobState, _error: ErrorCategory): 
     mutationSurface: 'build_command',
     rejected: false,
     rejectionReason: null,
+    fileMutated: null
   };
 }
 
 async function repairRuntimeVersionMismatch(state: JobState, _error: ErrorCategory): Promise<FixStrategyResult> {
   const pkgJsonPath = path.join(state.sandboxPath, 'package.json');
+  const contentBefore = await readFileSafe(pkgJsonPath);
   try {
-    const data = await fs.readFile(pkgJsonPath, 'utf8');
-    const pkg = JSON.parse(data);
+    const pkg = JSON.parse(contentBefore);
     if (pkg.engines) {
       delete pkg.engines.node;
-      await fs.writeFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+      const contentAfter = JSON.stringify(pkg, null, 2);
+      await fs.writeFile(pkgJsonPath, contentAfter);
       return {
         patched: true,
         details: 'Stripped strict engines constraint from package.json',
@@ -183,6 +250,11 @@ async function repairRuntimeVersionMismatch(state: JobState, _error: ErrorCatego
         mutationSurface: 'package_json:engines',
         rejected: false,
         rejectionReason: null,
+        fileMutated: {
+          path: pkgJsonPath,
+          contentBefore,
+          contentAfter
+        }
       };
     }
     return reject('repair_runtime_version', 'No engines field found in package.json');
@@ -193,8 +265,9 @@ async function repairRuntimeVersionMismatch(state: JobState, _error: ErrorCatego
 
 async function repairMissingEnv(state: JobState, _error: ErrorCategory): Promise<FixStrategyResult> {
   const envPath = path.join(state.sandboxPath, '.env');
-  const envData = '# Generated by RepoClaw — placeholder values for sandbox execution\nPORT=3000\nDATABASE_URL=placeholder\nAPI_KEY=placeholder\n';
-  await fs.writeFile(envPath, envData);
+  const contentBefore = await readFileSafe(envPath);
+  const contentAfter = '# Generated by RepoClaw — placeholder values for sandbox execution\nPORT=3000\nDATABASE_URL=placeholder\nAPI_KEY=placeholder\n';
+  await fs.writeFile(envPath, contentAfter);
   return {
     patched: true,
     details: 'Generated placeholder .env file for sandbox execution',
@@ -203,6 +276,11 @@ async function repairMissingEnv(state: JobState, _error: ErrorCategory): Promise
     mutationSurface: 'env_file',
     rejected: false,
     rejectionReason: null,
+    fileMutated: {
+      path: envPath,
+      contentBefore,
+      contentAfter
+    }
   };
 }
 
@@ -301,6 +379,20 @@ const REPAIR_STRATEGIES: Record<string, (state: JobState, error: ErrorCategory) 
 export const autoFix = async (state: JobState, error: ErrorCategory): Promise<FixStrategyResult> => {
   const category = error.category;
   logger.info(`Skill: auto_fix -> Evaluating repair policy for ${category}`);
+
+  if (state.simulateViolation) {
+    logger.error(`SANDBOX_VIOLATION: Repair strategy attempted to write to unauthorized host directory: C:/Windows/System32`);
+    return {
+      patched: false,
+      details: "Policy violation: Attempted mutation of host filesystem path C:/Windows/System32",
+      strategy: "unauthorized_host_write",
+      safety: 'DISALLOWED',
+      mutationSurface: null,
+      rejected: true,
+      rejectionReason: "Sandbox policy breached: write operation outside container root directory.",
+      fileMutated: null
+    };
+  }
 
   state.interventionsAttempted++;
 

@@ -30,6 +30,7 @@ export const startWebSocketServer = () => {
 
         const source = 'websocket' as const;
         const request = normalizeInput(payload, source);
+        request.simulateViolation = !!payload.simulateViolation;
 
         ws.send(JSON.stringify({ status: 'ACK', message: `Job accepted for ${request.url}` }));
 
@@ -59,6 +60,7 @@ export const startWebSocketServer = () => {
             matchStrength: result?.errors?.length ? result.errors[result.errors.length - 1].matchStrength : null,
             classificationSource: result?.errors?.length ? result.errors[result.errors.length - 1].classificationSource : null,
             pipelineEvents: result?.pipelineEvents || [],
+            cycleLogs: result?.cycleLogs || {},
           }
         }));
       } catch (err: any) {

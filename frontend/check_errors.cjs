@@ -10,5 +10,8 @@ const puppeteer = require('puppeteer');
 
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle0' });
   
+  // Wait 2 seconds for the WebSocket connection and state sync to happen
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
   await browser.close();
 })();

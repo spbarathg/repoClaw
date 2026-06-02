@@ -17,6 +17,11 @@ export interface RepairTraceEntry {
   improved: boolean;
   rolledBack: boolean;
   rejectionReason: string | null;
+  fileMutated?: {
+    path: string;
+    contentBefore: string;
+    contentAfter: string;
+  } | null;
 }
 
 export interface CommandMutation {
@@ -77,6 +82,9 @@ export interface RepoClawState {
   provenance: PipelineProvenance | null;
   pipelineEvents: string[];
   historyLedger: HistoryLedgerEntry[];
+  cycleLogs: Record<number, string[]>;
+  selectedCycle: number;
+  simulateViolation: boolean;
 }
 
 const INITIAL_STATE: RepoClawState = {
@@ -100,6 +108,9 @@ const INITIAL_STATE: RepoClawState = {
   provenance: null,
   pipelineEvents: [],
   historyLedger: [],
+  cycleLogs: {},
+  selectedCycle: 1,
+  simulateViolation: false,
 };
 
 export function useRepoClawSocket() {
@@ -145,6 +156,14 @@ export function useRepoClawSocket() {
         if (Array.isArray(meta.commandMutations)) next.commandMutations = meta.commandMutations;
         if (Array.isArray(meta.repairTrace)) next.repairTrace = meta.repairTrace;
         if (Array.isArray(meta.pipelineEvents)) next.pipelineEvents = meta.pipelineEvents;
+        if (meta.cycleLogs) {
+          next.cycleLogs = meta.cycleLogs;
+          // Dynamically highlight the active running cycle
+          const keys = Object.keys(meta.cycleLogs).map(Number);
+          if (keys.length > 0) {
+            next.selectedCycle = Math.max(...keys);
+          }
+        }
         if (meta.stack) {
           if (meta.stack.language) next.stack = meta.stack.language;
           if (meta.stack.packageManager) next.packageManager = meta.stack.packageManager;
@@ -193,7 +212,7 @@ export function useRepoClawSocket() {
     };
   }, [checkConnection]);
 
-  const analyze = useCallback((url: string) => {
+  const analyze = useCallback((url: string, simulateViolation: boolean = false) => {
     if (wsRef.current) wsRef.current.close();
 
     setState({
@@ -201,6 +220,7 @@ export function useRepoClawSocket() {
       status: 'CONNECTING',
       targetUrl: url,
       stack: 'Analyzing...',
+      simulateViolation,
     });
 
     try {
@@ -214,7 +234,7 @@ export function useRepoClawSocket() {
 
         setTimeout(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ url }));
+            ws.send(JSON.stringify({ url, simulateViolation }));
           }
         }, 100);
       };
@@ -229,26 +249,31 @@ export function useRepoClawSocket() {
             parseLogForState(payload.message, payload.meta);
           } else if (payload.status === 'DONE') {
             const fs = payload.finalState;
-            setState((prev) => ({
-              ...prev,
-              status: 'DONE',
-              stage: 'VERDICT',
-              report: fs?.report ?? null,
-              verdict: fs?.verdict ?? null,
-              errorCategory: fs?.errorCategory ?? prev.errorCategory,
-              matchStrength: fs?.matchStrength != null ? Math.round(fs.matchStrength * 100) : prev.matchStrength,
-              classificationSource: fs?.classificationSource ?? prev.classificationSource,
-              interventionsAttempted: fs?.interventionsAttempted ?? prev.interventionsAttempted,
-              retryCount: fs?.retryCount ?? 0,
-              commandMutations: fs?.commandMutations || [],
-              repairTrace: fs?.repairTrace || [],
-              provenance: fs?.provenance || null,
-              pipelineEvents: fs?.pipelineEvents || prev.pipelineEvents,
-              stack: fs?.stack?.language ?? prev.stack,
-              packageManager: fs?.stack?.packageManager ?? prev.packageManager,
-              lockfilePresent: fs?.stack?.lockfilePresent ?? prev.lockfilePresent,
-              buildScriptPresent: fs?.stack?.buildScriptPresent ?? prev.buildScriptPresent,
-            }));
+            setState((prev) => {
+              const maxCycle = fs?.retryCount ? fs.retryCount : 1;
+              return {
+                ...prev,
+                status: 'DONE',
+                stage: 'VERDICT',
+                report: fs?.report ?? null,
+                verdict: fs?.verdict ?? null,
+                errorCategory: fs?.errorCategory ?? prev.errorCategory,
+                matchStrength: fs?.matchStrength != null ? Math.round(fs.matchStrength * 100) : prev.matchStrength,
+                classificationSource: fs?.classificationSource ?? prev.classificationSource,
+                interventionsAttempted: fs?.interventionsAttempted ?? prev.interventionsAttempted,
+                retryCount: fs?.retryCount ?? 0,
+                commandMutations: fs?.commandMutations || [],
+                repairTrace: fs?.repairTrace || [],
+                provenance: fs?.provenance || null,
+                pipelineEvents: fs?.pipelineEvents || prev.pipelineEvents,
+                stack: fs?.stack?.language ?? prev.stack,
+                packageManager: fs?.stack?.packageManager ?? prev.packageManager,
+                lockfilePresent: fs?.stack?.lockfilePresent ?? prev.lockfilePresent,
+                buildScriptPresent: fs?.stack?.buildScriptPresent ?? prev.buildScriptPresent,
+                cycleLogs: fs?.cycleLogs || prev.cycleLogs,
+                selectedCycle: maxCycle,
+              };
+            });
             appendLog(`[SYSTEM] Pipeline complete.`);
           } else if (payload.status === 'ERROR') {
             setState((prev) => ({ ...prev, status: 'ERROR' }));
@@ -275,5 +300,22 @@ export function useRepoClawSocket() {
     }
   }, []);
 
-  return { state, analyze };
+  const abort = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setState((prev) => ({
+      ...prev,
+      status: 'IDLE',
+      stage: 'IDLE',
+    }));
+    appendLog('[SYSTEM] Pipeline execution aborted by user.');
+  }, []);
+
+  const selectCycle = useCallback((cycle: number) => {
+    setState((prev) => ({ ...prev, selectedCycle: cycle }));
+  }, []);
+
+  return { state, analyze, abort, selectCycle };
 }
