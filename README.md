@@ -1,7 +1,7 @@
 # RepoClaw
 
 > [!IMPORTANT]
-> **🎬 30-Second Video Presentation Available!**
+> **🎬 Video Presentation Available!**
 > We have included our official video walkthrough and presentation directly inside this repository.
 > You can play or download it here: **[demoVideo.mp4](demoVideo.mp4)**.
 
